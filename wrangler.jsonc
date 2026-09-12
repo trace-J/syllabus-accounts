@@ -1,0 +1,31 @@
+// Cloudflare configuration for the Syllabus accounts Worker.
+//
+// Secrets are never here. Put them in with `npx wrangler secret put <NAME>`:
+//   GOOGLE_CLIENT_SECRET   the Web OAuth client's secret
+//   SESSION_SECRET         signs the browser session cookie; any long random string
+// For local dev, the same names go in .dev.vars, which is gitignored.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "syllabus-accounts",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "account_id": "896f047d297ba60187557f9029f6fbc5",
+  "routes": [
+    { "pattern": "syllabusaccounts.maincoursemedia.com", "custom_domain": true }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "syllabus-accounts",
+      "database_id": "9ed6731f-6323-4999-9674-0cb898b991aa",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "PUBLIC_URL": "https://syllabusaccounts.maincoursemedia.com",
+    // The Web OAuth client in Google Cloud project friendly-bazaar-507320-b7.
+    // A client id is public by design; it appears in every sign-in URL.
+    "GOOGLE_CLIENT_ID": "521787457302-0b2fd25sgr8g72gsocmj3p5hiej5mbap.apps.googleusercontent.com"
+  },
+  "observability": { "enabled": true }
+}
