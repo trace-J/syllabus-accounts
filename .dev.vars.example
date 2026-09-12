@@ -1,0 +1,3 @@
+# Copy to .dev.vars for `npm run dev`. Never commit .dev.vars.
+GOOGLE_CLIENT_SECRET=GOCSPX-...
+SESSION_SECRET=any-long-random-string

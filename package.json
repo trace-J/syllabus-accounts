@@ -1,0 +1,25 @@
+{
+  "name": "syllabus-accounts",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Accounts for Syllabus: Google sign-in, device claims, settings and Drive grants.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "wrangler types && tsc --noEmit",
+    "db:migrate": "wrangler d1 migrations apply syllabus-accounts --local",
+    "db:migrate:remote": "wrangler d1 migrations apply syllabus-accounts --remote",
+    "types": "wrangler types"
+  },
+  "dependencies": {
+    "hono": "^4.13.7"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.131.1"
+  }
+}
