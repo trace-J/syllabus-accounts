@@ -27,11 +27,77 @@ export function page(title: string, body: string): string {
 <body><h1>${h(title)}</h1>${body}</body></html>`;
 }
 
+const FOOTER = `<p class="muted" style="margin-top:3em"><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="https://github.com/trace-J/LectureAI">Syllabus on GitHub</a></p>`;
+
 export function landing(): string {
   return page(
     "Syllabus accounts",
-    `<p class="muted">Sign in to connect a Mac running Syllabus to your account.</p>
-     <p><a href="/login"><button class="primary">Sign in with Google</button></a></p>`,
+    `<p class="muted">Syllabus records your lectures on your Mac and files study notes in your Google Drive.
+        Sign in to connect a Mac running Syllabus to your account.</p>
+     <p><a href="/login"><button class="primary">Sign in with Google</button></a></p>${FOOTER}`,
+  );
+}
+
+export function privacyPage(): string {
+  return page(
+    "Privacy",
+    `<p class="muted">Last updated September 13, 2026.</p>
+     <p>Syllabus is a personal lecture-recording tool. The recording, transcription, and summarizing all happen on
+        the Mac that runs it. This account service exists so that a Mac can be tied to your identity and so your
+        settings and your Google Drive connection can follow you to another Mac.</p>
+     <h2>What this service stores</h2>
+     <ul>
+       <li><strong>Who you are.</strong> When you sign in with Google we keep your Google account id, email address, and
+           display name.</li>
+       <li><strong>Your Macs.</strong> The name of each Mac you connect, when it connected, when it last checked in, and,
+           when it is published on the web, its address. Each Mac holds a token that identifies it; we keep only a hash
+           of that token.</li>
+       <li><strong>Your settings.</strong> The text of your class schedule, so it can follow you to another Mac.</li>
+       <li><strong>Your Google Drive connection.</strong> If you connect Drive, the refresh token Google issues is stored
+           encrypted and is used only to mint short-lived access tokens for your own Macs. The Macs never receive the
+           refresh token. Syllabus asks only for the <code>drive.file</code> permission, which reaches files Syllabus
+           itself created and nothing else in your Drive.</li>
+     </ul>
+     <p>Recordings, transcripts, summaries, and API keys never come to this service. They live on your Mac and in your
+        own Google Drive.</p>
+     <h2>How it is used</h2>
+     <p>Only to run Syllabus for you: signing you in, telling your Macs who they belong to, syncing your settings, and
+        letting your Macs file notes to your Drive. Nothing is sold, shared with advertisers, or used to build
+        profiles. Syllabus's use and transfer of information received from Google APIs adheres to the
+        <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data
+        Policy</a>, including the Limited Use requirements.</p>
+     <h2>Where it lives</h2>
+     <p>On Cloudflare, in a database that belongs to this service. Traffic to and from it is encrypted.</p>
+     <h2>Your choices</h2>
+     <ul>
+       <li>Remove a Mac from your account page at any time; its token stops working at once.</li>
+       <li>Disconnect Google Drive from your account page; the grant is revoked at Google for every Mac at once.
+           You can also remove Syllabus under your Google account's third-party access settings.</li>
+       <li>To delete your account and everything stored with it, open an issue at
+           <a href="https://github.com/trace-J/syllabus-accounts">github.com/trace-J/syllabus-accounts</a> or use
+           the support email on the Google sign-in screen, and it will be removed.</li>
+     </ul>
+     <p>This service is open source; its code is at
+        <a href="https://github.com/trace-J/syllabus-accounts">github.com/trace-J/syllabus-accounts</a>.</p>
+     ${FOOTER}`,
+  );
+}
+
+export function termsPage(): string {
+  return page(
+    "Terms",
+    `<p class="muted">Last updated September 13, 2026.</p>
+     <p>Syllabus and this account service are provided as they are, free of charge, for recording and studying your own
+        lectures. Use them only for recordings you are allowed to make, and follow your school's rules about
+        recording classes.</p>
+     <p>You are responsible for what you record and for the Google account and Drive you connect. We may remove an
+        account that abuses the service. The service may change or stop at any time; your recordings and notes stay in
+        your own Google Drive regardless.</p>
+     <p>There is no warranty of any kind, and the people behind Syllabus are not liable for any loss arising from its
+        use, to the extent the law allows.</p>
+     <p>Questions: open an issue at
+        <a href="https://github.com/trace-J/syllabus-accounts">github.com/trace-J/syllabus-accounts</a>.</p>
+     ${FOOTER}`,
   );
 }
 

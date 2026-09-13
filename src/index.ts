@@ -12,7 +12,7 @@ import * as db from "./db";
 import { devices } from "./devices";
 import type { AppEnv } from "./env";
 import { google } from "./google";
-import { accountPage, landing } from "./pages";
+import { accountPage, landing, privacyPage, termsPage } from "./pages";
 import { panel } from "./panel";
 import { settings } from "./settings";
 import { drive } from "./drive";
@@ -37,6 +37,8 @@ app.use("*", async (c, next) => {
 });
 
 app.get("/healthz", (c) => c.json({ ok: true }));
+app.get("/privacy", (c) => c.html(privacyPage()));
+app.get("/terms", (c) => c.html(termsPage()));
 
 app.get("/", async (c) => {
   const account = c.get("account");

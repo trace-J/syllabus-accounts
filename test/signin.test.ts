@@ -122,6 +122,16 @@ describe("the sign-in routes", () => {
     expect(((await me.json()) as { device: unknown }).device).toBeNull();
   });
 
+  it("publishes a privacy policy and terms for the consent screen", async () => {
+    const privacy = await get("/privacy");
+    expect(privacy.status).toBe(200);
+    const text = await privacy.text();
+    expect(text).toContain("drive.file");
+    expect(text).toContain("Limited Use");
+    expect((await get("/terms")).status).toBe(200);
+    expect(await (await get("/")).text()).toContain('href="/privacy"');
+  });
+
   it("signs out", async () => {
     const { cookie } = await signedInAs("me@example.com");
     const res = await get("/logout", { Cookie: cookie });
