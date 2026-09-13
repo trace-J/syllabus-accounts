@@ -18,6 +18,7 @@ export default defineConfig(async () => {
             GOOGLE_CLIENT_ID: "test-client-id.apps.googleusercontent.com",
             GOOGLE_CLIENT_SECRET: "test-client-secret",
             SESSION_SECRET: "test-session-secret-long-enough-to-sign-with",
+            DRIVE_KEY: "test-drive-key",
           },
         },
       }),

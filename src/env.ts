@@ -8,6 +8,8 @@ export type Bindings = {
   GOOGLE_CLIENT_SECRET: string;
   /** Secret: signs the browser session cookie. `wrangler secret put SESSION_SECRET`. */
   SESSION_SECRET: string;
+  /** Secret: encrypts stored Drive refresh tokens. `wrangler secret put DRIVE_KEY`. */
+  DRIVE_KEY: string;
 };
 
 export type Account = {

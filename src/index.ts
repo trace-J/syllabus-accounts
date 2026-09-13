@@ -15,6 +15,7 @@ import { google } from "./google";
 import { accountPage, landing } from "./pages";
 import { panel } from "./panel";
 import { settings } from "./settings";
+import { drive } from "./drive";
 import { sameOrigin, sessionMiddleware } from "./session";
 import { DEVICE_TOKEN_PREFIX, sha256Hex } from "./util";
 
@@ -40,7 +41,7 @@ app.get("/healthz", (c) => c.json({ ok: true }));
 app.get("/", async (c) => {
   const account = c.get("account");
   if (!account) return c.html(landing());
-  return c.html(accountPage(account, await db.devicesOf(c.env.DB, account.id)));
+  return c.html(accountPage(account, await db.devicesOf(c.env.DB, account.id), await db.driveGrant(c.env.DB, account.id)));
 });
 
 /** Who am I: for a panel checking its token, or a browser checking its session. */
@@ -67,6 +68,7 @@ app.route("/", google);
 app.route("/", devices);
 app.route("/", panel);
 app.route("/", settings);
+app.route("/", drive);
 
 // The form-post logout in google.ts is fine cross-origin only because it
 // signs the person out; anything that changes state checks sameOrigin.
