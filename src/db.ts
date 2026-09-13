@@ -221,3 +221,54 @@ export async function collectDeviceCode(db: D1Database, hash: string): Promise<b
 export async function sweepDeviceCodes(db: D1Database): Promise<void> {
   await db.prepare("DELETE FROM device_codes WHERE expires_at < ?").bind(now()).run();
 }
+
+// --- Devices' public addresses, and panel sign-in codes ----------------------
+
+export async function deviceById(db: D1Database, id: string): Promise<Device | null> {
+  return db.prepare("SELECT * FROM devices WHERE id = ? AND revoked_at IS NULL").bind(id).first<Device>();
+}
+
+export async function setDevicePublicUrl(db: D1Database, deviceId: string, publicUrl: string): Promise<void> {
+  await db.prepare("UPDATE devices SET public_url = ? WHERE id = ?").bind(publicUrl, deviceId).run();
+}
+
+export type PanelCode = {
+  code_hash: string;
+  device_id: string;
+  account_id: string;
+  redirect_uri: string;
+  created_at: string;
+  expires_at: string;
+  used_at: string | null;
+};
+
+export async function insertPanelCode(
+  db: D1Database,
+  codeHash: string,
+  deviceId: string,
+  accountId: string,
+  redirectUri: string,
+  expiresAt: string,
+): Promise<void> {
+  await db
+    .prepare(
+      "INSERT INTO panel_codes (code_hash, device_id, account_id, redirect_uri, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(codeHash, deviceId, accountId, redirectUri, now(), expiresAt)
+    .run();
+}
+
+/** Redeem a panel code for `deviceId`, once. Null when it is not that device's live, unused code. */
+export async function redeemPanelCode(db: D1Database, codeHash: string, deviceId: string): Promise<PanelCode | null> {
+  const row = await db.prepare("SELECT * FROM panel_codes WHERE code_hash = ?").bind(codeHash).first<PanelCode>();
+  if (!row || row.device_id !== deviceId || row.used_at || row.expires_at < now()) return null;
+  const res = await db
+    .prepare("UPDATE panel_codes SET used_at = ? WHERE code_hash = ? AND used_at IS NULL")
+    .bind(now(), codeHash)
+    .run();
+  return res.meta.changes ? row : null;
+}
+
+export async function sweepPanelCodes(db: D1Database): Promise<void> {
+  await db.prepare("DELETE FROM panel_codes WHERE expires_at < ?").bind(now()).run();
+}

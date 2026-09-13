@@ -20,6 +20,13 @@ their Google Drive grant.
   identifies it from then on. `/` lists the Macs on an account and can remove one.
 - **Who am I.** `GET /me` answers a browser session or a device bearer with the
   account and, for a device, which Mac it is.
+- **Sign in to a panel over the web.** A panel published through a tunnel
+  sends a browser with no session to `/panel/authorize`; if the signed-in
+  account owns that panel's device, the browser goes back to the panel with a
+  one-time code, and the panel redeems it at `/panel/exchange` with its own
+  device token. Anyone else is told the panel is not theirs. A panel tells us
+  where it is published with `POST /device/public-url`, and a browser is only
+  ever sent back to that address.
 
 ## The device flow
 
@@ -38,6 +45,21 @@ Codes live fifteen minutes; the poll interval is five seconds. The token is
 minted at collection, so it exists in plain form only in the one response
 that carries it; the database keeps a SHA-256 of it. Removing a Mac on the
 account page, or `POST /device/revoke` from the panel itself, ends the token.
+
+## Signing in to a panel
+
+```
+browser -> panel (through its tunnel, no session)
+        <- 302 to /panel/authorize?device=&redirect_uri=&state=
+browser -> this Worker: signs in with Google if needed; the account must own the device
+        <- 302 to redirect_uri?code=&state=          (code lives five minutes, redeemed once)
+panel   -> POST /panel/exchange {code}  Authorization: Bearer syd_...
+        <- {account: {id, email, name}}
+panel sets its own session cookie for that person
+```
+
+The code alone is worthless: only the device it was minted for can redeem
+it, and `redirect_uri` has to sit on the address that device registered.
 
 ## Running it
 
@@ -75,11 +97,12 @@ redirect URIs must include
 ## What is stored
 
 `accounts` (Google sub, email, name), `devices` (one per claimed panel, with
-a profile and a name), `device_tokens` (hashes only), and `device_codes`
-(claims in progress). No recording, transcript, or API key ever comes here.
+a profile, a name, and the address it is published at), `device_tokens`
+(hashes only), `device_codes` (claims in progress), and `panel_codes`
+(browser sign-ins on their way to a panel, hashes only). No recording, transcript, or API key ever comes here.
 
 ## Later phases
 
-Settings sync (the class schedule), the Drive grant held by the account and
-short-lived access tokens handed to the panel, and the panel's web sign-in
-delegated to this service. Each is its own PR in both repos.
+Settings sync (the class schedule), and the Drive grant held by the account
+with short-lived access tokens handed to the panel. Each is its own PR in
+both repos.
