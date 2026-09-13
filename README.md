@@ -64,8 +64,11 @@ npx wrangler secret put SESSION_SECRET
 
 The Worker's route is a custom domain, so `wrangler deploy` also creates the
 DNS record. The Google side is a **Web application** OAuth client in the
-Syllabus Cloud project (friendly-bazaar-507320-b7), the same client the
-panel's own sign-in used; its authorized redirect URIs must include
+Google Cloud project named **LectureAI**, the same client the panel's own
+sign-in uses. (The Desktop client Syllabus authorizes Drive with is in a
+different project, friendly-bazaar-507320-b7; a client id starts with its
+project's number, which is how to tell them apart.) Its authorized
+redirect URIs must include
 `https://syllabusaccounts.maincoursemedia.com/oauth2/callback` and, for
 `npm run dev`, `http://localhost:8787/oauth2/callback`.
 
