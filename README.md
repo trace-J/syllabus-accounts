@@ -46,6 +46,13 @@ minted at collection, so it exists in plain form only in the one response
 that carries it; the database keeps a SHA-256 of it. Removing a Mac on the
 account page, or `POST /device/revoke` from the panel itself, ends the token.
 
+- **Settings documents.** `GET` and `PUT /settings/:name` with the device
+  bearer store small named texts per account and profile. The first is
+  `schedule`, the panel's schedule file, so a class schedule follows its
+  owner to another Mac. A `PUT` with `expected_updated_at` is refused with a
+  409 and the current document when another Mac wrote in between; the panel
+  decides which copy wins.
+
 ## Signing in to a panel
 
 ```
@@ -99,10 +106,10 @@ redirect URIs must include
 `accounts` (Google sub, email, name), `devices` (one per claimed panel, with
 a profile, a name, and the address it is published at), `device_tokens`
 (hashes only), `device_codes` (claims in progress), and `panel_codes`
-(browser sign-ins on their way to a panel, hashes only). No recording, transcript, or API key ever comes here.
+(browser sign-ins on their way to a panel, hashes only), and `settings`
+(named documents per account and profile, the schedule first). No recording, transcript, or API key ever comes here.
 
 ## Later phases
 
-Settings sync (the class schedule), and the Drive grant held by the account
-with short-lived access tokens handed to the panel. Each is its own PR in
-both repos.
+The Drive grant held by the account, with short-lived access tokens handed
+to the panel. Its own PR in both repos.

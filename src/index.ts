@@ -14,6 +14,7 @@ import type { AppEnv } from "./env";
 import { google } from "./google";
 import { accountPage, landing } from "./pages";
 import { panel } from "./panel";
+import { settings } from "./settings";
 import { sameOrigin, sessionMiddleware } from "./session";
 import { DEVICE_TOKEN_PREFIX, sha256Hex } from "./util";
 
@@ -65,6 +66,7 @@ app.post("/device/revoke", async (c) => {
 app.route("/", google);
 app.route("/", devices);
 app.route("/", panel);
+app.route("/", settings);
 
 // The form-post logout in google.ts is fine cross-origin only because it
 // signs the person out; anything that changes state checks sameOrigin.

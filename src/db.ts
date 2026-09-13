@@ -272,3 +272,51 @@ export async function redeemPanelCode(db: D1Database, codeHash: string, deviceId
 export async function sweepPanelCodes(db: D1Database): Promise<void> {
   await db.prepare("DELETE FROM panel_codes WHERE expires_at < ?").bind(now()).run();
 }
+
+// --- Settings documents ------------------------------------------------------
+
+export type Setting = {
+  account_id: string;
+  profile: string;
+  name: string;
+  content: string;
+  updated_at: string;
+  updated_by: string;
+};
+
+export async function getSetting(db: D1Database, accountId: string, profile: string, name: string): Promise<Setting | null> {
+  return db
+    .prepare("SELECT * FROM settings WHERE account_id = ? AND profile = ? AND name = ?")
+    .bind(accountId, profile, name)
+    .first<Setting>();
+}
+
+/**
+ * Write a document. With `expected` set, the write only happens when the
+ * current updated_at equals it (or nothing is stored yet and expected is
+ * ""), so two Macs cannot silently overwrite each other. Returns the row as
+ * stored, or null when the expectation failed.
+ */
+export async function putSetting(
+  db: D1Database,
+  accountId: string,
+  profile: string,
+  name: string,
+  content: string,
+  updatedBy: string,
+  expected: string | null,
+): Promise<Setting | null> {
+  const ts = now();
+  const current = await getSetting(db, accountId, profile, name);
+  if (expected !== null && (current?.updated_at ?? "") !== expected) return null;
+  // updated_at is the version, so two writes in one millisecond must differ.
+  const stamp = current && current.updated_at >= ts ? new Date(Date.parse(current.updated_at) + 1).toISOString() : ts;
+  await db
+    .prepare(
+      `INSERT INTO settings (account_id, profile, name, content, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (account_id, profile, name) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+    )
+    .bind(accountId, profile, name, content, stamp, updatedBy)
+    .run();
+  return { account_id: accountId, profile, name, content, updated_at: stamp, updated_by: updatedBy };
+}
