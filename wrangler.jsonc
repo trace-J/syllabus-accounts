@@ -23,7 +23,7 @@
   ],
   "vars": {
     "PUBLIC_URL": "https://syllabusaccounts.maincoursemedia.com",
-    // The Web OAuth client in Google Cloud project friendly-bazaar-507320-b7.
+    // The Web OAuth client in the Google Cloud project named LectureAI.
     // A client id is public by design; it appears in every sign-in URL.
     "GOOGLE_CLIENT_ID": "521787457302-0b2fd25sgr8g72gsocmj3p5hiej5mbap.apps.googleusercontent.com"
   },
