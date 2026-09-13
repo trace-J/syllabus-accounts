@@ -3,6 +3,7 @@
 // Secrets are never here. Put them in with `npx wrangler secret put <NAME>`:
 //   GOOGLE_CLIENT_SECRET   the Web OAuth client's secret
 //   SESSION_SECRET         signs the browser session cookie; any long random string
+//   DRIVE_KEY              encrypts stored Drive refresh tokens; any long random string
 // For local dev, the same names go in .dev.vars, which is gitignored.
 {
   "$schema": "node_modules/wrangler/config-schema.json",

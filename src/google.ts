@@ -15,6 +15,7 @@
 import { Hono } from "hono";
 import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
 import { upsertAccount } from "./db";
+import { finishConnect } from "./drive";
 import type { AppEnv } from "./env";
 import { page } from "./pages";
 import { clearSession, setSession } from "./session";
@@ -27,7 +28,7 @@ export const CALLBACK_PATH = "/oauth2/callback";
 const FLOW_COOKIE = "syllabus_accounts_signin";
 const FLOW_SECONDS = 600;
 
-type Flow = { state: string; nonce: string; next: string; t: number };
+export type Flow = { state: string; nonce: string; next: string; t: number; kind?: "signin" | "drive" };
 
 /** A path on this site to return to after signing in, never elsewhere. */
 export function safeNext(value: string | undefined): string {
@@ -110,6 +111,10 @@ google.get(CALLBACK_PATH, async (c) => {
   const code = c.req.query("code") ?? "";
   if (!code) {
     return c.html(page("Sign in", "<p>Google sent no code back.</p><p><a href='/login'>Try again</a></p>"), 400);
+  }
+  if (flow.kind === "drive") {
+    deleteCookie(c, FLOW_COOKIE, { path: "/" });
+    return finishConnect(c, flow, code);
   }
 
   let claims: IdClaims;

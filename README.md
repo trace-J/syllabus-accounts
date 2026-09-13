@@ -53,6 +53,15 @@ account page, or `POST /device/revoke` from the panel itself, ends the token.
   409 and the current document when another Mac wrote in between; the panel
   decides which copy wins.
 
+- **Google Drive on the account.** `/drive/connect` (signed in) runs the
+  Drive consent for the `drive.file` scope through the same callback the
+  sign-in uses; the refresh token is stored encrypted under the `DRIVE_KEY`
+  secret. A panel asks `POST /drive/token` with its device bearer and gets a
+  one-hour access token; it never sees the refresh token. `GET /drive/status`
+  says whether a grant exists, and `/drive/disconnect` revokes it at Google
+  and forgets it. A grant Google stops honoring is marked revoked and the
+  account page says so.
+
 ## Signing in to a panel
 
 ```
@@ -89,7 +98,11 @@ npm run db:migrate:remote         # when a migration was added
 npm run deploy
 npx wrangler secret put GOOGLE_CLIENT_SECRET
 npx wrangler secret put SESSION_SECRET
+npx wrangler secret put DRIVE_KEY
 ```
+
+Changing `DRIVE_KEY` makes every stored Drive grant unreadable; people
+would reconnect Drive from the account page.
 
 The Worker's route is a custom domain, so `wrangler deploy` also creates the
 DNS record. The Google side is a **Web application** OAuth client in the
@@ -107,9 +120,11 @@ redirect URIs must include
 a profile, a name, and the address it is published at), `device_tokens`
 (hashes only), `device_codes` (claims in progress), and `panel_codes`
 (browser sign-ins on their way to a panel, hashes only), and `settings`
-(named documents per account and profile, the schedule first). No recording, transcript, or API key ever comes here.
+(named documents per account and profile, the schedule first), and
+`drive_grants` (one encrypted refresh token per account, and which Google
+account granted it). No recording, transcript, or API key ever comes here.
 
 ## Later phases
 
-The Drive grant held by the account, with short-lived access tokens handed
-to the panel. Its own PR in both repos.
+Retiring the panel's own Google sign-in and email allowlist once every Mac
+that publishes a panel is signed in to an account.

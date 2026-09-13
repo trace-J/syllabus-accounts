@@ -320,3 +320,48 @@ export async function putSetting(
     .run();
   return { account_id: accountId, profile, name, content, updated_at: stamp, updated_by: updatedBy };
 }
+
+// --- Drive grants ----------------------------------------------------------------
+
+export type DriveGrant = {
+  account_id: string;
+  refresh_token_enc: string;
+  scopes: string;
+  google_email: string;
+  granted_at: string;
+  revoked_at: string | null;
+  revoked_reason: string;
+};
+
+export async function driveGrant(db: D1Database, accountId: string): Promise<DriveGrant | null> {
+  return db.prepare("SELECT * FROM drive_grants WHERE account_id = ?").bind(accountId).first<DriveGrant>();
+}
+
+export async function putDriveGrant(
+  db: D1Database,
+  accountId: string,
+  refreshTokenEnc: string,
+  scopes: string,
+  googleEmail: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO drive_grants (account_id, refresh_token_enc, scopes, google_email, granted_at, revoked_at, revoked_reason)
+       VALUES (?, ?, ?, ?, ?, NULL, '')
+       ON CONFLICT (account_id) DO UPDATE SET refresh_token_enc = excluded.refresh_token_enc, scopes = excluded.scopes,
+         google_email = excluded.google_email, granted_at = excluded.granted_at, revoked_at = NULL, revoked_reason = ''`,
+    )
+    .bind(accountId, refreshTokenEnc, scopes, googleEmail, now())
+    .run();
+}
+
+export async function markDriveGrantRevoked(db: D1Database, accountId: string, reason: string): Promise<void> {
+  await db
+    .prepare("UPDATE drive_grants SET revoked_at = ?, revoked_reason = ? WHERE account_id = ? AND revoked_at IS NULL")
+    .bind(now(), reason, accountId)
+    .run();
+}
+
+export async function deleteDriveGrant(db: D1Database, accountId: string): Promise<void> {
+  await db.prepare("DELETE FROM drive_grants WHERE account_id = ?").bind(accountId).run();
+}

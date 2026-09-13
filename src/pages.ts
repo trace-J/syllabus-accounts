@@ -1,5 +1,6 @@
 /** The few pages this Worker shows a person. Plain HTML, one stylesheet. */
 
+import type { DriveGrant } from "./db";
 import type { Account, Device } from "./env";
 import { escapeHtml as h } from "./util";
 
@@ -38,7 +39,7 @@ function when(iso: string): string {
   return iso.slice(0, 16).replace("T", " ") + " UTC";
 }
 
-export function accountPage(account: Account, devices: Device[]): string {
+export function accountPage(account: Account, devices: Device[], grant: DriveGrant | null = null): string {
   const rows = devices.length
     ? devices
         .map(
@@ -54,10 +55,23 @@ export function accountPage(account: Account, devices: Device[]): string {
         <form method="post" action="/logout" style="display:inline"><button>Sign out</button></form></p>
      <h2>Your Macs</h2>
      <table><tbody>${rows}</tbody></table>
+     <h2>Google Drive</h2>
+     ${driveSection(grant)}
      <h2>Connect a Mac</h2>
      <p class="muted">Syllabus shows a code on its Setup page. Enter it here.</p>
      ${codeForm("", "")}`,
   );
+}
+
+function driveSection(grant: DriveGrant | null): string {
+  if (grant && !grant.revoked_at) {
+    return `<p><span class="ok">Connected</span> as <strong>${h(grant.google_email || "your Google account")}</strong> since ${when(grant.granted_at)}.
+      Every Mac on this account files to that Drive.
+      <form method="post" action="/drive/disconnect" style="display:inline"><button>Disconnect</button></form></p>`;
+  }
+  const why = grant?.revoked_at ? `<p class="warn">The earlier connection stopped working: ${h(grant.revoked_reason || "it was revoked")}.</p>` : "";
+  return `${why}<p class="muted">Connect once, and every Mac signed in to this account files its notes to your Drive. Syllabus only sees files it created.</p>
+    <p><a href="/drive/connect"><button class="primary">Connect Google Drive</button></a></p>`;
 }
 
 export function codeForm(code: string, error: string): string {
