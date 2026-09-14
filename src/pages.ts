@@ -140,6 +140,33 @@ function driveSection(grant: DriveGrant | null): string {
     <p><a href="/drive/connect"><button class="primary">Connect Google Drive</button></a></p>`;
 }
 
+/** Someone signed in, but not the person whose Mac this is. */
+export function notYoursPage(email: string): string {
+  return page(
+    "Not yours",
+    `<p>That Syllabus belongs to someone else. You are signed in as <strong>${h(email)}</strong>.</p>
+     <p><form method="post" action="/logout" style="display:inline"><button>Use a different account</button></form></p>`,
+  );
+}
+
+/**
+ * The panel's Mac is not holding its connection to us right now: asleep,
+ * offline, or the panel is not running. Shown in place of a timeout, and it
+ * retries on its own.
+ */
+export function panelNotConnectedPage(deviceName: string, lastConnected: string, everConnected: boolean): string {
+  const name = deviceName || "That Mac";
+  const since = lastConnected ? `<p class="muted">Last connected ${when(lastConnected)}.</p>` : "";
+  const how = everConnected
+    ? `<p>Syllabus reaches this address on its own whenever its panel is running and the Mac is awake and online. Wake the Mac, or check <code style="font-size:1em;letter-spacing:0">intake service status</code> there.</p>`
+    : `<p>Syllabus has not connected from that Mac yet. It does so on its own once the panel is running and the Mac is signed in to your account.</p>`;
+  return page(
+    `${h(name)} is not connected`,
+    `${how}${since}<p class="muted">This page tries again every 10 seconds.</p>
+     <p class="muted"><a href="/">Your account</a></p>`,
+  ).replace("<title>", '<meta http-equiv="refresh" content="10"><title>');
+}
+
 export function codeForm(code: string, error: string): string {
   return `<form class="row" method="post" action="/device/approve">
       <input class="code" name="user_code" value="${h(code)}" placeholder="WXYZ-2345" autocomplete="off" required>

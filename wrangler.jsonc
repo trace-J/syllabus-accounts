@@ -14,6 +14,13 @@
   "routes": [
     { "pattern": "syllabusaccounts.maincoursemedia.com", "custom_domain": true }
   ],
+  // One Durable Object per claimed panel holds that panel's WebSocket and relays
+  // browser requests over it (src/panel-relay.ts). SQLite-backed, which every
+  // Workers plan allows.
+  "durable_objects": {
+    "bindings": [{ "name": "PANEL", "class_name": "PanelRelay" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PanelRelay"] }],
   "d1_databases": [
     {
       "binding": "DB",

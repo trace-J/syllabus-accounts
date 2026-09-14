@@ -24,8 +24,8 @@
 import { Hono } from "hono";
 import * as db from "./db";
 import type { AppEnv } from "./env";
-import { page } from "./pages";
-import { escapeHtml as h, plusSeconds, randomId, sha256Hex } from "./util";
+import { notYoursPage, page } from "./pages";
+import { plusSeconds, randomId, sha256Hex } from "./util";
 
 export const PANEL_CODE_SECONDS = 300;
 
@@ -88,14 +88,7 @@ panel.get("/panel/authorize", async (c) => {
   }
   if (device.account_id !== account.id) {
     console.log(`refused ${account.email} at device ${device.id}: belongs to another account`);
-    return c.html(
-      page(
-        "Not yours",
-        `<p>That Syllabus belongs to someone else. You are signed in as <strong>${h(account.email)}</strong>.</p>
-         <p><form method="post" action="/logout" style="display:inline"><button>Use a different account</button></form></p>`,
-      ),
-      403,
-    );
+    return c.html(notYoursPage(account.email), 403);
   }
   await db.sweepPanelCodes(c.env.DB);
   const code = randomId(32);
