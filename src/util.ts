@@ -30,6 +30,20 @@ export function fromBase64Url(text: string): Uint8Array {
   return out;
 }
 
+/** Plain base64, for bodies carried inside JSON frames. Chunked: apply() has an argument limit. */
+export function toBase64(buf: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < buf.length; i += 8192) s += String.fromCharCode.apply(null, Array.from(buf.subarray(i, i + 8192)));
+  return btoa(s);
+}
+
+export function fromBase64(text: string): Uint8Array {
+  const bin = atob(text);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 export async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");

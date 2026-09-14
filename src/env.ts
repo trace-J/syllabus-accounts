@@ -1,5 +1,7 @@
 export type Bindings = {
   DB: D1Database;
+  /** One PanelRelay Durable Object per device: the panel's socket, and the relay over it. */
+  PANEL: DurableObjectNamespace;
   /** Where this Worker is published, no trailing slash. */
   PUBLIC_URL: string;
   /** The Web OAuth client in Google Cloud project friendly-bazaar-507320-b7. */

@@ -14,6 +14,7 @@ import type { AppEnv } from "./env";
 import { google } from "./google";
 import { accountPage, landing, privacyPage, termsPage } from "./pages";
 import { panel } from "./panel";
+import { relay } from "./relay";
 import { settings } from "./settings";
 import { drive } from "./drive";
 import { sameOrigin, sessionMiddleware } from "./session";
@@ -69,6 +70,7 @@ app.post("/device/revoke", async (c) => {
 app.route("/", google);
 app.route("/", devices);
 app.route("/", panel);
+app.route("/", relay);
 app.route("/", settings);
 app.route("/", drive);
 
@@ -83,3 +85,5 @@ app.onError((err, c) => {
 });
 
 export default app;
+// The Durable Object class has to be exported from the entry module.
+export { PanelRelay } from "./panel-relay";

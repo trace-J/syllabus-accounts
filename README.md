@@ -53,6 +53,14 @@ account page, or `POST /device/revoke` from the panel itself, ends the token.
   409 and the current document when another Mac wrote in between; the panel
   decides which copy wins.
 
+- **A panel on the web, for every Mac.** Each claimed device has an address
+  here, `/p/<device>/`, that reaches the panel running on that Mac. The
+  panel holds a WebSocket open to this service (`GET /relay/connect`, with
+  its device bearer), and a browser's requests to the address travel down
+  it. Only the account that owns the device gets in; the account session
+  here is the sign-in. Nothing is installed or configured on the Mac beyond
+  Syllabus itself. See "The relay" below.
+
 - **Google Drive on the account.** `/drive/connect` (signed in) runs the
   Drive consent for the `drive.file` scope through the same callback the
   sign-in uses; the refresh token is stored encrypted under the `DRIVE_KEY`
@@ -76,6 +84,43 @@ panel sets its own session cookie for that person
 
 The code alone is worthless: only the device it was minted for can redeem
 it, and `redirect_uri` has to sit on the address that device registered.
+
+## The relay
+
+```
+panel (intake/relay.py)                  this Worker                              browser
+GET /relay/connect  (Bearer syd_...)  -> PanelRelay object for the device
+   Upgrade: websocket                    holds the socket; sends {t:"welcome"}
+                                         GET /p/<device>/api/status  <----------  owner, signed in here
+   <- {t:"req", id, method, path, query, headers, viewer, base, body}
+   runs it against the local Flask app
+   -> {t:"res", id, status, headers, body, more?}  (then {t:"chunk", ...})
+                                         200 with the panel's answer  --------->
+```
+
+One Durable Object per device (`src/panel-relay.ts`) holds that panel's
+socket and matches answers to requests by id. Bodies are base64 inside JSON
+frames; a message on Cloudflare may not exceed 1 MiB, so the panel splits
+long answers at the chunk size the welcome frame names, and the object caps
+the whole at 4 MB. Only what the panel serves is carried: `/`, `/setup`,
+`/api/*`, and `/static/*`, by GET or POST. Requests from another origin, a
+body over 64 KB, or any other path are refused before they reach the Mac.
+
+Who the viewer is (`viewer.email`, `viewer.account_id`) rides in every
+frame, and `base` is the path prefix the panel should write its links under.
+The panel trusts both because they arrived on the socket it opened with its
+own token. The service never sees the Mac's recordings or keys: the panel
+serves neither.
+
+When the Mac is asleep, offline, or its panel is not running, there is no
+socket, and the browser gets a 503 page saying so, with the Mac's name and
+when it was last connected, refreshing every 10 seconds; `/api/` paths get a
+JSON 503 with `relay: "not-connected"`. A request the panel does not answer
+in 25 seconds is a 504, and the socket is closed as dead, so a lid closed
+without a clean goodbye shows as not connected on the next request rather
+than hanging. The object hibernates between messages; the panel's pings are
+answered without waking it. The Durable Object class is SQLite-backed
+(`new_sqlite_classes` in `wrangler.jsonc`), which every Workers plan allows.
 
 ## Running it
 
@@ -132,5 +177,5 @@ account granted it). No recording, transcript, or API key ever comes here.
 
 ## Later phases
 
-Retiring the panel's own Google sign-in and email allowlist once every Mac
-that publishes a panel is signed in to an account.
+Retiring the tunnel path: `/panel/authorize`, `/panel/exchange`, and each
+device's `public_url`, once every panel reaches the web through the relay.
