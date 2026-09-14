@@ -24,9 +24,11 @@
   ],
   "vars": {
     "PUBLIC_URL": "https://syllabusaccounts.maincoursemedia.com",
-    // The Web OAuth client in the Google Cloud project named LectureAI.
+    // The Web OAuth client in Google Cloud project friendly-bazaar-507320-b7, the same
+    // project as the Desktop client Syllabus ships for `intake login`, so a Drive grant
+    // from either sees the same files (drive.file is scoped to the creating project).
     // A client id is public by design; it appears in every sign-in URL.
-    "GOOGLE_CLIENT_ID": "521787457302-0b2fd25sgr8g72gsocmj3p5hiej5mbap.apps.googleusercontent.com"
+    "GOOGLE_CLIENT_ID": "61659290097-hch8n1iihe1jmejt96u35ud6202qgrl1.apps.googleusercontent.com"
   },
   "observability": { "enabled": true }
 }

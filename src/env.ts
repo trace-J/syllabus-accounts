@@ -2,7 +2,7 @@ export type Bindings = {
   DB: D1Database;
   /** Where this Worker is published, no trailing slash. */
   PUBLIC_URL: string;
-  /** The Web OAuth client in the Google Cloud project named LectureAI. */
+  /** The Web OAuth client in Google Cloud project friendly-bazaar-507320-b7. */
   GOOGLE_CLIENT_ID: string;
   /** Secret: the Web client's secret. `wrangler secret put GOOGLE_CLIENT_SECRET`. */
   GOOGLE_CLIENT_SECRET: string;

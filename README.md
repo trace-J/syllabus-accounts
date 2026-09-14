@@ -105,14 +105,20 @@ Changing `DRIVE_KEY` makes every stored Drive grant unreadable; people
 would reconnect Drive from the account page.
 
 The Worker's route is a custom domain, so `wrangler deploy` also creates the
-DNS record. The Google side is a **Web application** OAuth client in the
-Google Cloud project named **LectureAI**, the same client the panel's own
-sign-in uses. (The Desktop client Syllabus authorizes Drive with is in a
-different project, friendly-bazaar-507320-b7; a client id starts with its
-project's number, which is how to tell them apart.) Its authorized
-redirect URIs must include
+DNS record. The Google side is a **Web application** OAuth client in Google
+Cloud project **friendly-bazaar-507320-b7**, the same project as the Desktop
+client Syllabus ships for `intake login`. That matters for Drive: the
+`drive.file` scope only reaches files created by the same project, so
+keeping both clients in one project is what lets a Drive grant on the
+account see the "Lecture Notes" folder a Mac's own token created, and the
+other way around. (The first version of this service used a Web client in
+a separate project named LectureAI; the panel's own fallback sign-in still
+does.) The Drive consent comes back through the same callback as the
+sign-in; the client's authorized redirect URIs must include
 `https://syllabusaccounts.maincoursemedia.com/oauth2/callback` and, for
-`npm run dev`, `http://localhost:8787/oauth2/callback`.
+`npm run dev`, `http://localhost:8787/oauth2/callback`. The project's
+consent screen is published (In production), with `maincoursemedia.com`
+verified in Search Console, which Google requires before publishing.
 
 ## What is stored
 
