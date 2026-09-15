@@ -2,7 +2,7 @@
 
 import type { DriveGrant } from "./db";
 import type { Account, Device } from "./env";
-import { escapeHtml as h } from "./util";
+import { escapeHtml as h, panelUrl } from "./util";
 
 const STYLE = `
   :root { color-scheme: light dark; }
@@ -105,11 +105,29 @@ function when(iso: string): string {
   return iso.slice(0, 16).replace("T", " ") + " UTC";
 }
 
-export function accountPage(account: Account, devices: Device[], grant: DriveGrant | null = null): string {
+/** What a Mac's relay object says about it, or null when it could not be asked. */
+export type RelayInfo = { connected: boolean; connected_at: string; disconnected_at: string } | null;
+
+function relayLine(d: Device, info: RelayInfo | undefined, publicUrl: string): string {
+  const address = panelUrl(publicUrl, d.id);
+  const link = `<a href="${h(address)}">${h(address.replace(/^https:\/\//, ""))}</a>`;
+  if (!info) return `<br><span class="muted">Its panel: ${link}</span>`;
+  if (info.connected) return `<br><span class="ok">Connected now</span> <span class="muted">at ${link}</span>`;
+  const last = info.connected_at ? `, last connected ${when(info.connected_at)}` : ", has not connected yet";
+  return `<br><span class="muted">Not connected${last}. Its panel: ${link}</span>`;
+}
+
+export function accountPage(
+  account: Account,
+  devices: Device[],
+  grant: DriveGrant | null = null,
+  relays: Record<string, RelayInfo> = {},
+  publicUrl = "",
+): string {
   const rows = devices.length
     ? devices
         .map(
-          (d) => `<tr><td><strong>${h(d.name)}</strong><br><span class="muted">${h(d.profile)}, added ${when(d.created_at)}${d.public_url ? `, at <a href="${h(d.public_url)}">${h(d.public_url.replace(/^https:\/\//, ""))}</a>` : ""}</span></td>
+          (d) => `<tr><td><strong>${h(d.name)}</strong><br><span class="muted">${h(d.profile)}, added ${when(d.created_at)}${d.public_url ? `, also at <a href="${h(d.public_url)}">${h(d.public_url.replace(/^https:\/\//, ""))}</a>` : ""}</span>${publicUrl ? relayLine(d, relays[d.id], publicUrl) : ""}</td>
                   <td class="muted">last seen ${when(d.last_seen_at)}</td>
                   <td><form method="post" action="/devices/${h(d.id)}/revoke"><button>Remove</button></form></td></tr>`,
         )
@@ -120,6 +138,7 @@ export function accountPage(account: Account, devices: Device[], grant: DriveGra
     `<p>Signed in as <strong>${h(account.email)}</strong>${account.name ? ` (${h(account.name)})` : ""}.
         <form method="post" action="/logout" style="display:inline"><button>Sign out</button></form></p>
      <h2>Your Macs</h2>
+     <p class="muted">Each Mac's panel has an address here that only you can open, from any browser or phone, whenever that Mac is awake and its panel is running.</p>
      <table><tbody>${rows}</tbody></table>
      <h2>Google Drive</h2>
      ${driveSection(grant)}
