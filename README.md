@@ -198,9 +198,13 @@ existed was nothing:
 - 12MB per audio chunk and 400,000 characters per transcript, refused
   outright rather than handled.
 
-Audio seconds are charged as the greater of what the caller declares and
-what the byte count could possibly be at 192kbps, so understating the
-duration is bounded rather than free.
+Audio seconds come from the file, not from the caller: an .m4a states its
+length in its `moov/mvhd` header and that is what is billed. A declared
+duration can only raise the charge, never lower it, and audio whose header
+cannot be read is billed as though it were 32kbps, which makes an
+unreadable upload the expensive way to send audio rather than the cheap
+one. A byte count alone would not do, since the same 12MB is eight minutes
+at 192kbps and over three hours at 8kbps.
 
 ## What is stored
 

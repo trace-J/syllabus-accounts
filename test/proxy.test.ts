@@ -1,6 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as db from "../src/db";
+import { mp4DurationSeconds } from "../src/mp4";
 import { TRIAL_ALLOWANCE } from "../src/proxy";
 import { claimDevice, get, ORIGIN, postJson } from "./helpers";
 
@@ -44,12 +45,41 @@ function summaryOk(over: Record<string, unknown> = {}) {
     );
 }
 
-/** An audio part of `bytes`, sent the way a panel sends one. */
-function audioForm(bytes: number, seconds: number) {
+function box(type: string, payload: Uint8Array): Uint8Array {
+  const out = new Uint8Array(8 + payload.length);
+  new DataView(out.buffer).setUint32(0, out.length);
+  for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+  out.set(payload, 8);
+  return out;
+}
+
+/** The smallest .m4a that states a length: ftyp, then moov > mvhd. */
+function m4a(seconds: number, padTo = 0): Uint8Array {
+  const mvhd = new Uint8Array(100);
+  const view = new DataView(mvhd.buffer);
+  view.setUint8(0, 0); // version 0
+  view.setUint32(12, 1000); // timescale: milliseconds
+  view.setUint32(16, Math.round(seconds * 1000));
+  const head = new Uint8Array([...box("ftyp", new Uint8Array(8)), ...box("moov", box("mvhd", mvhd))]);
+  if (padTo <= head.length) return head;
+  // Real chunks carry their audio too; the bytes after moov are ignored.
+  const padded = new Uint8Array(padTo);
+  padded.set(head);
+  return padded;
+}
+
+/** An audio part, sent the way a panel sends one. */
+function audioForm(bytes: number, seconds: number, body?: Uint8Array) {
   const form = new FormData();
-  form.set("audio", new File([new Uint8Array(bytes)], "chunk_001.m4a", { type: "audio/mp4" }));
+  form.set("audio", new File([body ?? new Uint8Array(bytes)], "chunk_001.m4a", { type: "audio/mp4" }));
   form.set("duration_seconds", String(seconds));
   return form;
+}
+
+/** A real .m4a of `realSeconds`, with whatever the caller chooses to declare. */
+function m4aForm(realSeconds: number, declared: number, sizeBytes = 0) {
+  const body = m4a(realSeconds, sizeBytes);
+  return audioForm(body.length, declared, body);
 }
 
 function postAudio(form: FormData, headers: Record<string, string> = {}) {
@@ -57,6 +87,27 @@ function postAudio(form: FormData, headers: Record<string, string> = {}) {
 }
 
 const bearer = (token: string) => ({ Authorization: "Bearer " + token });
+
+describe("how long the audio is", () => {
+  it("reads the length out of the header", () => {
+    expect(mp4DurationSeconds(m4a(480))).toBeCloseTo(480, 3);
+    expect(mp4DurationSeconds(m4a(1.5))).toBeCloseTo(1.5, 3);
+    // Padding after moov is audio data and changes nothing.
+    expect(mp4DurationSeconds(m4a(480, 200_000))).toBeCloseTo(480, 3);
+  });
+
+  it("says nothing rather than guessing when it is not an MP4", () => {
+    expect(mp4DurationSeconds(new Uint8Array(0))).toBeNull();
+    expect(mp4DurationSeconds(new Uint8Array(4096))).toBeNull();
+    expect(mp4DurationSeconds(new TextEncoder().encode("ID3 this is an mp3"))).toBeNull();
+    // A moov with no mvhd inside it.
+    expect(mp4DurationSeconds(box("moov", box("trak", new Uint8Array(32))))).toBeNull();
+    // A box claiming to be larger than the file.
+    const lying = box("moov", new Uint8Array(16));
+    new DataView(lying.buffer).setUint32(0, 9999);
+    expect(mp4DurationSeconds(lying)).toBeNull();
+  });
+});
 
 describe("who may call the proxy", () => {
   it("turns away a request with no bearer", async () => {
@@ -96,7 +147,7 @@ describe("transcription", () => {
     const calls = upstream(transcriptionOk("hello from the lecture"));
     const { account, token, deviceId } = await claimDevice("one@example.com");
 
-    const res = await postAudio(audioForm(64_000, 480), bearer(token));
+    const res = await postAudio(m4aForm(480, 480, 64_000), bearer(token));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { text: string; audio_seconds: number };
     expect(body.text).toBe("hello from the lecture");
@@ -116,14 +167,44 @@ describe("transcription", () => {
     expect(rows.results[0]).toMatchObject({ kind: "transcribe", units: 480, device_id: deviceId });
   });
 
-  it("ignores a caller that understates the duration, down to the byte floor", async () => {
+  it("charges what the file says, not what the caller says", async () => {
     upstream(transcriptionOk());
     const { account, token } = await claimDevice("liar@example.com");
-    // 240kB of audio cannot be one second, whatever the caller says.
-    const res = await postAudio(audioForm(240_000, 1), bearer(token));
+    // 8 minutes of audio, declared as one second, in a deliberately small
+    // file: neither the claim nor the byte count decides this.
+    const res = await postAudio(m4aForm(480, 1), bearer(token));
     expect(res.status).toBe(200);
-    expect((await res.json() as { audio_seconds: number }).audio_seconds).toBe(10);
-    expect(await db.usedThisPeriod(env.DB, account.id, "transcribe")).toBe(10);
+    expect((await res.json() as { audio_seconds: number }).audio_seconds).toBe(480);
+    expect(await db.usedThisPeriod(env.DB, account.id, "transcribe")).toBe(480);
+  });
+
+  it("lets a declared duration raise the charge but never lower it", async () => {
+    upstream(transcriptionOk());
+    const { account, token } = await claimDevice("honest@example.com");
+    const res = await postAudio(m4aForm(60, 300), bearer(token));
+    expect((await res.json() as { audio_seconds: number }).audio_seconds).toBe(300);
+    expect(await db.usedThisPeriod(env.DB, account.id, "transcribe")).toBe(300);
+  });
+
+  it("bills audio it cannot read as though it were the cheapest bitrate", async () => {
+    upstream(transcriptionOk());
+    const { account, token } = await claimDevice("opaque@example.com");
+    // Not an MP4 at all, and claiming to be one second. 400kB at 32kbps.
+    const res = await postAudio(audioForm(400_000, 1), bearer(token));
+    expect(res.status).toBe(200);
+    expect((await res.json() as { audio_seconds: number }).audio_seconds).toBe(100);
+    expect(await db.usedThisPeriod(env.DB, account.id, "transcribe")).toBe(100);
+  });
+
+  it("refuses a chunk longer than a chunk is allowed to be", async () => {
+    const calls = upstream(transcriptionOk());
+    const { token } = await claimDevice("marathon@example.com");
+    // Three hours of 8kbps audio in a 12MB file: the old byte floor called
+    // this 500 seconds, the header calls it what it is.
+    const res = await postAudio(m4aForm(3 * 3600, 1), bearer(token));
+    expect(res.status).toBe(413);
+    expect((await res.json() as { error: string }).error).toBe("too_long");
+    expect(calls).toHaveLength(0);
   });
 
   it("refuses a body over the cap before calling anyone", async () => {
@@ -155,7 +236,7 @@ describe("transcription", () => {
     await db.putAllowance(env.DB, account.id, 600, TRIAL_ALLOWANCE.summary_tokens, "test");
     await db.recordUsage(env.DB, account.id, deviceId, "transcribe", 500);
 
-    const res = await postAudio(audioForm(8000, 480), bearer(token));
+    const res = await postAudio(m4aForm(480, 480), bearer(token));
     expect(res.status).toBe(402);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).toMatchObject({ error: "allowance_exhausted", kind: "transcribe", used: 500, allowance: 600 });
@@ -172,7 +253,7 @@ describe("transcription", () => {
       }),
     );
     const { account, token } = await claimDevice("rejected@example.com");
-    const res = await postAudio(audioForm(8000, 480), bearer(token));
+    const res = await postAudio(m4aForm(480, 480), bearer(token));
 
     expect(res.status).toBe(502);
     const text = await res.text();
@@ -187,7 +268,7 @@ describe("transcription", () => {
   it("passes a provider's rate limit on as one, without its body", async () => {
     upstream(() => new Response(JSON.stringify({ error: { message: "org org-xyz rate limited" } }), { status: 429 }));
     const { token } = await claimDevice("busy@example.com");
-    const res = await postAudio(audioForm(8000, 480), bearer(token));
+    const res = await postAudio(m4aForm(480, 480), bearer(token));
     expect(res.status).toBe(429);
     expect(await res.json()).toEqual({ error: "provider_busy" });
   });
@@ -196,7 +277,7 @@ describe("transcription", () => {
     const calls = upstream(transcriptionOk());
     const { token } = await claimDevice("flood@example.com");
     const statuses: number[] = [];
-    for (let i = 0; i < 22; i++) statuses.push((await postAudio(audioForm(8000, 60), bearer(token))).status);
+    for (let i = 0; i < 22; i++) statuses.push((await postAudio(m4aForm(60, 60), bearer(token))).status);
 
     expect(statuses.filter((s) => s === 200)).toHaveLength(20);
     expect(statuses.filter((s) => s === 429)).toHaveLength(2);
@@ -313,7 +394,7 @@ describe("what is left", () => {
     upstream(transcriptionOk());
     const mine = await claimDevice("mine@example.com");
     const theirs = await claimDevice("theirs@example.com");
-    await postAudio(audioForm(8000, 480), bearer(mine.token));
+    await postAudio(m4aForm(480, 480), bearer(mine.token));
 
     expect(await db.usedThisPeriod(env.DB, mine.account.id, "transcribe")).toBe(480);
     expect(await db.usedThisPeriod(env.DB, theirs.account.id, "transcribe")).toBe(0);

@@ -41,6 +41,7 @@
 import { Hono, type Context } from "hono";
 import * as db from "./db";
 import type { AppEnv } from "./env";
+import { mp4DurationSeconds } from "./mp4";
 import { profileSpec, userMessage } from "./prompts";
 
 // --- What is fixed here, and not by a caller --------------------------------
@@ -73,15 +74,22 @@ const MAX_CHUNK_SECONDS = 1800;
 const MAX_LABEL_CHARS = 120;
 
 /**
- * Audio seconds are charged as the greater of what the caller declares and
- * what the byte count can possibly be, taking 192kbps (24000 bytes/second) as
- * the highest bitrate worth accepting. An honest caller is charged its real
- * duration. A caller that understates gets no lower than the byte floor, so
- * the understatement is bounded at roughly 3x rather than unbounded, and the
- * rate limit and the allowance still hold. Pinning the upload encode, in the
- * transcriber seam, is what closes the rest of that gap.
+ * How an audio chunk's seconds are decided, which is the number the whole
+ * allowance rests on.
+ *
+ * The caller does not get to decide it. An .m4a states its own length in its
+ * moov/mvhd header (mp4.ts), and that is what is charged. A caller's declared
+ * duration is only ever used to charge MORE, never less, so overstating costs
+ * the caller and understating buys nothing.
+ *
+ * A byte count is no substitute for reading the header: seconds per byte
+ * depend on the bitrate the caller picked, so the same 12MB is eight minutes
+ * at 192kbps and over three hours at 8kbps. Anything whose header cannot be
+ * read is therefore charged as though it were the lowest bitrate this service
+ * will entertain (32kbps), which makes an unreadable upload the expensive way
+ * to send audio rather than the cheap one.
  */
-const MAX_AUDIO_BYTES_PER_SECOND = 24_000;
+const UNREADABLE_AUDIO_BYTES_PER_SECOND = 4_000;
 
 /** Requests per account per window, per endpoint. */
 const RATE_WINDOW_SECONDS = 60;
@@ -193,14 +201,23 @@ proxy.post("/proxy/transcribe", async (c) => {
   // The declared length can be absent or a lie; the real size settles it.
   if (audio.size > MAX_AUDIO_BYTES) return c.json({ error: "too_large", limit_bytes: MAX_AUDIO_BYTES }, 413);
 
-  // Required, and not defaulted: an absent field would otherwise coerce to
-  // zero and quietly charge the byte floor instead of the real duration.
+  // Still required, though it can now only raise the charge: it is the
+  // caller's own account of the chunk, kept so an .m4a whose header lies
+  // short is still billed for what the caller knows it sent.
   const raw = form.get("duration_seconds");
   const declared = typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
   if (!Number.isFinite(declared) || declared <= 0 || declared > MAX_CHUNK_SECONDS) {
     return c.json({ error: "bad_request", detail: `duration_seconds must be 1 to ${MAX_CHUNK_SECONDS}` }, 400);
   }
-  const seconds = Math.max(Math.ceil(declared), Math.ceil(audio.size / MAX_AUDIO_BYTES_PER_SECOND));
+  // Read once: the same bytes are measured and then forwarded.
+  const bytes = new Uint8Array(await audio.arrayBuffer());
+  const measured = mp4DurationSeconds(bytes);
+  const seconds = measured === null
+    ? Math.max(Math.ceil(declared), Math.ceil(bytes.byteLength / UNREADABLE_AUDIO_BYTES_PER_SECOND))
+    : Math.max(Math.ceil(measured), Math.ceil(declared));
+  if (seconds > MAX_CHUNK_SECONDS) {
+    return c.json({ error: "too_long", limit_seconds: MAX_CHUNK_SECONDS, audio_seconds: seconds }, 413);
+  }
 
   const allowed = await allowanceFor(c.env.DB, account.id);
   const used = await db.usedThisPeriod(c.env.DB, account.id, "transcribe");
@@ -210,7 +227,7 @@ proxy.post("/proxy/transcribe", async (c) => {
 
   // Rebuilt rather than forwarded, so only these three fields reach OpenAI.
   const upstream = new FormData();
-  upstream.set("file", audio, audio.name || "chunk.m4a");
+  upstream.set("file", new Blob([bytes], { type: audio.type || "audio/mp4" }), audio.name || "chunk.m4a");
   upstream.set("model", TRANSCRIBE_MODEL);
   upstream.set("response_format", "text");
 
