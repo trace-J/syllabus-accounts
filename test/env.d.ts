@@ -7,6 +7,8 @@ declare namespace Cloudflare {
     GOOGLE_CLIENT_SECRET: string;
     SESSION_SECRET: string;
     DRIVE_KEY: string;
+    OPENAI_API_KEY: string;
+    ANTHROPIC_API_KEY: string;
     TEST_MIGRATIONS: import("cloudflare:test").D1Migration[];
   }
 }

@@ -19,6 +19,8 @@ export default defineConfig(async () => {
             GOOGLE_CLIENT_SECRET: "test-client-secret",
             SESSION_SECRET: "test-session-secret-long-enough-to-sign-with",
             DRIVE_KEY: "test-drive-key",
+            OPENAI_API_KEY: "sk-test-openai",
+            ANTHROPIC_API_KEY: "sk-ant-test",
           },
         },
       }),

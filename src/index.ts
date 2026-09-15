@@ -14,6 +14,7 @@ import type { AppEnv } from "./env";
 import { google } from "./google";
 import { accountPage, landing, privacyPage, termsPage } from "./pages";
 import { panel } from "./panel";
+import { proxy } from "./proxy";
 import { panelUrl, relay, relayState } from "./relay";
 import { settings } from "./settings";
 import { drive } from "./drive";
@@ -78,6 +79,7 @@ app.route("/", panel);
 app.route("/", relay);
 app.route("/", settings);
 app.route("/", drive);
+app.route("/", proxy);
 
 // The form-post logout in google.ts is fine cross-origin only because it
 // signs the person out; anything that changes state checks sameOrigin.
