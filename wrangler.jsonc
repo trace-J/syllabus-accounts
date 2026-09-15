@@ -4,6 +4,8 @@
 //   GOOGLE_CLIENT_SECRET   the Web OAuth client's secret
 //   SESSION_SECRET         signs the browser session cookie; any long random string
 //   DRIVE_KEY              encrypts stored Drive refresh tokens; any long random string
+//   OPENAI_API_KEY         the transcription key /proxy spends on a user's behalf
+//   ANTHROPIC_API_KEY      the summary key /proxy spends on a user's behalf
 // For local dev, the same names go in .dev.vars, which is gitignored.
 {
   "$schema": "node_modules/wrangler/config-schema.json",

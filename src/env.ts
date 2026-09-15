@@ -12,6 +12,10 @@ export type Bindings = {
   SESSION_SECRET: string;
   /** Secret: encrypts stored Drive refresh tokens. `wrangler secret put DRIVE_KEY`. */
   DRIVE_KEY: string;
+  /** Secret: the transcription key the proxy spends. `wrangler secret put OPENAI_API_KEY`. */
+  OPENAI_API_KEY: string;
+  /** Secret: the summary key the proxy spends. `wrangler secret put ANTHROPIC_API_KEY`. */
+  ANTHROPIC_API_KEY: string;
 };
 
 export type Account = {

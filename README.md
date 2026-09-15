@@ -166,6 +166,42 @@ sign-in; the client's authorized redirect URIs must include
 consent screen is published (In production), with `maincoursemedia.com`
 verified in Search Console, which Google requires before publishing.
 
+## The proxy
+
+Managed keys. A panel used to need its owner's own OpenAI and Anthropic keys
+in `~/.intake/syllabus/.env`; now the keys are Worker secrets here and the
+two paid calls are made from this service instead:
+
+    POST /proxy/transcribe   multipart: an `audio` part and `duration_seconds`
+                             -> { text, audio_seconds }
+    POST /proxy/summarize    { transcript, course, date }
+                             -> { summary, tokens }
+    GET  /proxy/usage        what is left this month
+
+Both paid endpoints take a device bearer, never a browser session.
+
+This is not a general-purpose API gateway, and the difference matters because
+the keys being spent are ours. The model, the upstream URL, the request
+shape, the system prompt and the response schema are all fixed in `proxy.ts`
+and `prompts.ts`. A caller sends audio, or a transcript and the two labels
+that frame it, and can pick nothing else; the prompt set comes from the
+profile on the caller's own device row. An upstream error is never passed
+through, so a rejected key tells the caller only that the provider was
+unavailable.
+
+Three things bound what a stolen device token can cost, which until this
+existed was nothing:
+
+- A monthly allowance per account, checked before the upstream call. The
+  default is the 5-hour trial; slice 4 (Stripe) is what writes real ones.
+- 20 transcriptions and 5 summaries per account per minute.
+- 12MB per audio chunk and 400,000 characters per transcript, refused
+  outright rather than handled.
+
+Audio seconds are charged as the greater of what the caller declares and
+what the byte count could possibly be at 192kbps, so understating the
+duration is bounded rather than free.
+
 ## What is stored
 
 `accounts` (Google sub, email, name), `devices` (one per claimed panel, with
@@ -174,7 +210,10 @@ a profile, a name, and the address it is published at), `device_tokens`
 (browser sign-ins on their way to a panel, hashes only), and `settings`
 (named documents per account and profile, the schedule first), and
 `drive_grants` (one encrypted refresh token per account, and which Google
-account granted it). No recording, transcript, or API key ever comes here.
+account granted it), and `usage` plus `allowances` (what the proxy spent and
+what it may spend, as numbers). No recording, transcript, or API key ever
+comes here: audio and transcripts stream through the proxy to the provider
+and only the unit count is kept.
 
 ## Later phases
 

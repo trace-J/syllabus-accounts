@@ -365,3 +365,108 @@ export async function markDriveGrantRevoked(db: D1Database, accountId: string, r
 export async function deleteDriveGrant(db: D1Database, accountId: string): Promise<void> {
   await db.prepare("DELETE FROM drive_grants WHERE account_id = ?").bind(accountId).run();
 }
+
+// --- Proxy usage, allowances, and rate limiting ------------------------------
+
+export type UsageKind = "transcribe" | "summarize";
+
+export type Allowance = {
+  account_id: string;
+  audio_seconds: number;
+  summary_tokens: number;
+  source: string;
+  updated_at: string;
+};
+
+/** The YYYY-MM a usage row counts against. Months are UTC, everywhere. */
+export function usagePeriod(at: Date = new Date()): string {
+  return at.toISOString().slice(0, 7);
+}
+
+export async function allowance(db: D1Database, accountId: string): Promise<Allowance | null> {
+  return db.prepare("SELECT * FROM allowances WHERE account_id = ?").bind(accountId).first<Allowance>();
+}
+
+/** What slice 4 will call once an account's entitlement is known. */
+export async function putAllowance(
+  db: D1Database,
+  accountId: string,
+  audioSeconds: number,
+  summaryTokens: number,
+  source: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO allowances (account_id, audio_seconds, summary_tokens, source, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (account_id) DO UPDATE SET audio_seconds = excluded.audio_seconds,
+         summary_tokens = excluded.summary_tokens, source = excluded.source, updated_at = excluded.updated_at`,
+    )
+    .bind(accountId, audioSeconds, summaryTokens, source, now())
+    .run();
+}
+
+/** Units of `kind` this account has already spent this period. */
+export async function usedThisPeriod(
+  db: D1Database,
+  accountId: string,
+  kind: UsageKind,
+  period = usagePeriod(),
+): Promise<number> {
+  const row = await db
+    .prepare("SELECT COALESCE(SUM(units), 0) AS total FROM usage WHERE account_id = ? AND kind = ? AND period = ?")
+    .bind(accountId, kind, period)
+    .first<{ total: number }>();
+  return row?.total ?? 0;
+}
+
+/** One upstream call that happened. Never carries audio or transcript text. */
+export async function recordUsage(
+  db: D1Database,
+  accountId: string,
+  deviceId: string,
+  kind: UsageKind,
+  units: number,
+): Promise<void> {
+  await db
+    .prepare("INSERT INTO usage (id, account_id, device_id, kind, units, period, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .bind(randomId(12), accountId, deviceId, kind, Math.max(0, Math.round(units)), usagePeriod(), now())
+    .run();
+}
+
+/**
+ * Count one request against a fixed window and say whether it is over.
+ *
+ * The increment and the read are one statement, so two requests arriving
+ * together cannot both see the lower count. Fixed windows let through up to
+ * twice the limit across a window boundary, which is the accepted cost of
+ * not keeping per-request timestamps: the money cap is the allowance, and
+ * this only has to stop a flood.
+ */
+export async function hitRateLimit(
+  db: D1Database,
+  bucket: string,
+  limit: number,
+  windowSeconds: number,
+  at: number = Date.now(),
+): Promise<{ allowed: boolean; count: number; retryAfter: number }> {
+  const windowStart = Math.floor(at / 1000 / windowSeconds) * windowSeconds;
+  const row = await db
+    .prepare(
+      `INSERT INTO rate_limits (bucket, window_start, count) VALUES (?, ?, 1)
+       ON CONFLICT (bucket, window_start) DO UPDATE SET count = count + 1
+       RETURNING count`,
+    )
+    .bind(bucket, windowStart)
+    .first<{ count: number }>();
+  const count = row?.count ?? 1;
+  return {
+    allowed: count <= limit,
+    count,
+    retryAfter: Math.max(1, windowStart + windowSeconds - Math.floor(at / 1000)),
+  };
+}
+
+/** Windows that have closed are of no further use; clear them opportunistically. */
+export async function sweepRateLimits(db: D1Database, before: number): Promise<void> {
+  await db.prepare("DELETE FROM rate_limits WHERE window_start < ?").bind(before).run();
+}
