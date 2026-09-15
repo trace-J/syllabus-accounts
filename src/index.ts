@@ -14,7 +14,7 @@ import type { AppEnv } from "./env";
 import { google } from "./google";
 import { accountPage, landing, privacyPage, termsPage } from "./pages";
 import { panel } from "./panel";
-import { relay } from "./relay";
+import { panelUrl, relay, relayState } from "./relay";
 import { settings } from "./settings";
 import { drive } from "./drive";
 import { sameOrigin, sessionMiddleware } from "./session";
@@ -44,7 +44,12 @@ app.get("/terms", (c) => c.html(termsPage()));
 app.get("/", async (c) => {
   const account = c.get("account");
   if (!account) return c.html(landing());
-  return c.html(accountPage(account, await db.devicesOf(c.env.DB, account.id), await db.driveGrant(c.env.DB, account.id)));
+  const devices = await db.devicesOf(c.env.DB, account.id);
+  // Each Mac's relay object knows whether its panel is connected right now.
+  const relays = Object.fromEntries(
+    await Promise.all(devices.map(async (d) => [d.id, await relayState(c.env, d.id).catch(() => null)] as const)),
+  );
+  return c.html(accountPage(account, devices, await db.driveGrant(c.env.DB, account.id), relays, c.env.PUBLIC_URL));
 });
 
 /** Who am I: for a panel checking its token, or a browser checking its session. */

@@ -196,6 +196,22 @@ describe("a browser at /p/<device>/", () => {
     expect(html).toContain("Last connected");
   });
 
+  it("the account page lists each Mac's address and whether it is connected", async () => {
+    const mine = await claimDevice("me@example.com", "Kitchen iMac");
+    let html = await (await get("/", { Cookie: mine.cookie })).text();
+    expect(html).toContain(`/p/${mine.deviceId}/`);
+    expect(html).toContain("has not connected yet");
+    const { ws } = await connectPanel(mine.token, echo);
+    html = await (await get("/", { Cookie: mine.cookie })).text();
+    expect(html).toContain("Connected now");
+    ws.close(1000, "bye");
+    for (let i = 0; i < 20 && html.includes("Connected now"); i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      html = await (await get("/", { Cookie: mine.cookie })).text();
+    }
+    expect(html).toContain("Not connected, last connected");
+  });
+
   it("the newest panel connection wins", async () => {
     const mine = await claimDevice("me@example.com");
     const first = await connectPanel(mine.token, () => null);

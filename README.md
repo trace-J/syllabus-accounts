@@ -17,7 +17,8 @@ their Google Drive grant.
   created on first sign-in, keyed by the Google `sub`.
 - **Claim a Mac** with a device code. The panel asks for a code, the person
   types it here while signed in, and the panel receives a bearer token that
-  identifies it from then on. `/` lists the Macs on an account and can remove one.
+  identifies it from then on. `/` lists the Macs on an account, each with its
+  panel's address and whether that panel is connected right now, and can remove one.
 - **Who am I.** `GET /me` answers a browser session or a device bearer with the
   account and, for a device, which Mac it is.
 - **Sign in to a panel over the web.** A panel published through a tunnel

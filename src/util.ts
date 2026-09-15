@@ -74,6 +74,13 @@ export function normalizeUserCode(raw: string): string {
   return letters.slice(0, 4) + "-" + letters.slice(4);
 }
 
+/** Where a device's panel is published on this service: /p/<device>/. */
+export const PANEL_PREFIX = "/p/";
+
+export function panelUrl(publicUrl: string, deviceId: string): string {
+  return publicUrl.replace(/\/$/, "") + PANEL_PREFIX + deviceId + "/";
+}
+
 export function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (ch) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] as string,

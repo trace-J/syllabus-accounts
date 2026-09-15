@@ -25,8 +25,9 @@ import type { AppEnv, Bindings } from "./env";
 import { notYoursPage, page } from "./pages";
 import { MAX_BODY_BYTES, REQUEST_HEADERS, type RelayState } from "./panel-relay";
 import { sameOrigin } from "./session";
+import { PANEL_PREFIX } from "./util";
 
-export const PANEL_PREFIX = "/p/";
+export { PANEL_PREFIX, panelUrl } from "./util";
 
 const METHODS = new Set(["GET", "POST"]);
 // What the panel serves and a browser may ask for. Nothing else exists on
@@ -36,11 +37,6 @@ const PATHS = [/^\/$/, /^\/setup$/, /^\/api\/[a-z0-9_\-/]*$/i, /^\/static\/[a-z0
 /** Whether the panel serves such a request at all. */
 export function relayAllowed(method: string, path: string): boolean {
   return METHODS.has(method) && PATHS.some((re) => re.test(path)) && !path.includes("..");
-}
-
-/** The address a device's panel is published at, on this service. */
-export function panelUrl(publicUrl: string, deviceId: string): string {
-  return publicUrl.replace(/\/$/, "") + PANEL_PREFIX + deviceId + "/";
 }
 
 /** Ask a device's object whether its panel is connected right now. */
