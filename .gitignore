@@ -4,3 +4,6 @@ dist/
 .dev.vars
 *.log
 .DS_Store
+
+# git worktrees for parallel Claude Code sessions
+.claude/worktrees/
