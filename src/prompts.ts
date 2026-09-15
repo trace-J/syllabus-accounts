@@ -36,7 +36,8 @@ Write for someone reviewing before an exam:
 - Explain the main concepts, don't just list them. If the instructor worked through an example or a calculation, walk through the reasoning and keep the numbers. If they explained *why* something works, capture that explanation.
 - Preserve the instructor's emphasis. Anything they repeated, said would be on the exam, or flagged as commonly misunderstood deserves prominence.
 - Skip attendance, scheduling chatter, and technical difficulties unless they carry a deadline or a requirement.
-- Capture every assignment, reading, quiz, exam, or project the class was told to do, dated or not. An assignment the instructor set no deadline for is still an action item: leave its date empty rather than dropping it. A student who misses an assignment because it never reached this list has been failed by these notes.
+- An action item is something the instructor assigned: work to hand in, a reading to do, a quiz or exam to sit. It has to be a thing the class was told to do, not a thing they were told to understand. Advice about what to study, what will be emphasized, or what students usually get wrong is not an action item; it belongs in the summary, where it is more useful anyway.
+- Capture every assignment that clears that bar, dated or not. One the instructor set no deadline for is still an action item: leave its date empty rather than dropping it. A student who misses an assignment because it never reached this list has been failed by these notes.
 - Do not invent action items, and do not invent deadlines. Return an empty list only when the instructor assigned nothing at all.
 - Keep each action item's task to the errand alone, under ten words, starting with a verb and free of markdown. Context goes in its detail field. An assignment the instructor brought up two or three times is still one action item, worded identically each time, not one per mention.
 - For each action item, resolve any relative deadline against the lecture date you are given: "next Thursday", "a week from today" and "before the exam" all become a real YYYY-MM-DD. If the instructor genuinely set no deadline, leave the date empty rather than inventing one.`;
@@ -125,7 +126,7 @@ export const PROFILES: Record<Profile, SummarySpec> = {
         "The due date as YYYY-MM-DD. Resolve anything relative against the lecture date given above, so 'next Thursday' becomes a real date. Use an empty string if the instructor gave no deadline at all. Never guess a date that was not stated or implied.",
       kind: "One of: assignment, reading, quiz, exam, project, other.",
       action_items:
-        "Every assignment, reading, quiz, exam, or project the class was told to do, whether or not a deadline came with it. An undated assignment still belongs here, with an empty due_date. Empty list only if nothing at all was assigned. Never invent one.",
+        "Every assignment, reading, quiz, exam, or project the class was told to do, whether or not a deadline came with it. An undated assignment still belongs here, with an empty due_date. Work to hand in or sit, never advice about what to study: 'know the four forms' is a summary point, not an action item. Empty list only if nothing at all was assigned. Never invent one",
     }),
   },
   sous: {
