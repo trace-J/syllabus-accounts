@@ -333,11 +333,20 @@ proxy.post("/proxy/summarize", async (c) => {
   await db.recordUsage(c.env.DB, account.id, device.id, "summarize", tokens || estimate);
 
   const block = answer?.content?.find((b) => b.type === "tool_use" && b.name === SUMMARY_TOOL);
-  if (!block?.input) {
-    console.log(`proxy: anthropic returned no summary (stop_reason=${answer?.stop_reason ?? "unknown"})`);
+  // An empty object is a truthy object, so `block.input` being present is not
+  // the same as a summary being present. Seen once in six runs on a 5,500 word
+  // transcript: a tool_use block whose input carried none of the fields, which
+  // went back as a 200 and reached the Mac as a blank note filed under the
+  // fallback slug, already paid for. A summary with no summary in it is a
+  // failed call, and the caller is told so rather than handed the blank.
+  const summary = block?.input as Record<string, unknown> | undefined;
+  const written = typeof summary?.summary_md === "string" ? summary.summary_md.trim() : "";
+  if (!written) {
+    console.log(`proxy: anthropic returned no summary (stop_reason=${answer?.stop_reason ?? "unknown"}, `
+      + `keys=${summary ? Object.keys(summary).join("|") || "none" : "no input"})`);
     return c.json({ error: "no_summary", stop_reason: answer?.stop_reason ?? "" }, 502);
   }
-  return c.json({ summary: block.input, tokens });
+  return c.json({ summary, tokens });
 });
 
 /** What is left this month, for a panel that wants to say so before recording. */
