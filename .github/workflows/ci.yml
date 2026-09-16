@@ -21,7 +21,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -44,17 +44,26 @@ jobs:
             exit 1
           fi
 
-      # vitest-pool-workers deadlocks on startup often enough that a single
-      # attempt would make this job useless: it hangs before any test runs,
-      # with no output. Each attempt is capped and retried, and a run that
-      # actually fails (rather than hangs) stops immediately, so a real failure
-      # is never retried into a pass.
+      # vitest-pool-workers deadlocks on startup: it hangs before any test
+      # runs, with no output. Locally that was 1 run in 6; on this runner it
+      # is worse, and a single attempt would make the job useless.
+      #
+      # The cap is sized against a healthy run, not against patience. A whole
+      # passing job takes about 30 seconds here, so 150s is already five times
+      # the headroom and a longer wait only buys a slower red. Six attempts at
+      # 150s is 15 minutes worst case, inside the 20 minute job timeout, which
+      # matters: the first version of this used three attempts of 300s, which
+      # is exactly the old 15 minute timeout, so a bad streak was CANCELLED
+      # rather than reported. A cancelled job tells you nothing.
+      #
+      # A run that FAILS rather than hangs stops immediately: only 137 and 124
+      # retry, so a real failure can never be retried into a pass.
       - name: Tests
         run: |
-          for attempt in 1 2 3; do
+          for attempt in 1 2 3 4 5 6; do
             echo "--- attempt $attempt ---"
             set +e
-            timeout --signal=KILL 300 npx vitest run --reporter=verbose
+            timeout --signal=KILL 150 npx vitest run --reporter=verbose
             status=$?
             set -e
             if [ $status -eq 0 ]; then exit 0; fi
