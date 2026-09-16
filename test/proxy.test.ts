@@ -361,6 +361,24 @@ describe("summarizing", () => {
     expect(await db.usedThisPeriod(env.DB, account.id, "summarize")).toBe(15);
   });
 
+  it("refuses a tool_use block that carries no summary, rather than passing the blank on", async () => {
+    // An empty object is truthy, so this used to go back as a 200 and reach
+    // the Mac as a blank note filed under the fallback slug, already paid for.
+    for (const input of [{}, { topic_slug: "Job-Order-Costing", key_terms: [] }, { summary_md: "   " }]) {
+      upstream(() =>
+        new Response(JSON.stringify({
+          content: [{ type: "tool_use", name: "record_summary", input }],
+          stop_reason: "tool_use",
+          usage: { input_tokens: 10, output_tokens: 5 },
+        }), { status: 200, headers: { "Content-Type": "application/json" } }),
+      );
+      const { token } = await claimDevice(`blank-${Object.keys(input).join("-") || "empty"}@example.com`);
+      const res = await postJson("/proxy/summarize", { transcript: "a lecture", course: "X", date: "2026-09-15" }, bearer(token));
+      expect(res.status).toBe(502);
+      expect((await res.json() as { error: string }).error).toBe("no_summary");
+    }
+  });
+
   it("rate limits summarizing more tightly than transcribing", async () => {
     const calls = upstream(summaryOk());
     const { token } = await claimDevice("sumflood@example.com");
