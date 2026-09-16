@@ -1,0 +1,84 @@
+# Every push and every PR: typecheck, tests, and the cross-repo prompt check.
+#
+# Nothing here needs a Cloudflare token. The tests run in workerd against a
+# throwaway D1 with fake bindings (vitest.config.ts), and `wrangler types` is
+# local codegen, so CI never touches the real account. Deploying is still a
+# person running `npm run deploy`.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # `wrangler types` regenerates worker-configuration.d.ts, which is
+      # committed. If that file is stale the types CI checks against are not
+      # the ones anybody edits, so say so rather than silently using fresh ones.
+      - name: Typecheck
+        run: |
+          npm run typecheck
+          if ! git diff --quiet -- worker-configuration.d.ts; then
+            echo "::error::worker-configuration.d.ts is stale. Run 'npm run types' and commit it."
+            git --no-pager diff -- worker-configuration.d.ts
+            exit 1
+          fi
+
+      # vitest-pool-workers deadlocks on startup often enough that a single
+      # attempt would make this job useless: it hangs before any test runs,
+      # with no output. Each attempt is capped and retried, and a run that
+      # actually fails (rather than hangs) stops immediately, so a real failure
+      # is never retried into a pass.
+      - name: Tests
+        run: |
+          for attempt in 1 2 3; do
+            echo "--- attempt $attempt ---"
+            set +e
+            timeout --signal=KILL 300 npx vitest run --reporter=verbose
+            status=$?
+            set -e
+            if [ $status -eq 0 ]; then exit 0; fi
+            if [ $status -ne 137 ] && [ $status -ne 124 ]; then
+              echo "::error::tests failed (exit $status)"
+              exit $status
+            fi
+            echo "::warning::attempt $attempt hung and was killed; retrying (known vitest-pool-workers startup deadlock)"
+          done
+          echo "::error::the test run hung on every attempt"
+          exit 1
+
+  # The lecture prompt lives in this repo AND in LectureAI, and they have
+  # already drifted twice. The second time shipped an older set of action-item
+  # rules to every account using managed keys, and nothing noticed until a
+  # benchmark showed different output. This fails the build instead.
+  prompt-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The lecture prompt must match LectureAI's
+        run: |
+          curl -fsSL -o /tmp/schemas.py \
+            https://raw.githubusercontent.com/trace-J/LectureAI/main/intake/schemas.py
+          python3 .github/workflows/prompt_parity.py /tmp/schemas.py src/prompts.ts
