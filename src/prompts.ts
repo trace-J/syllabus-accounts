@@ -126,7 +126,7 @@ export const PROFILES: Record<Profile, SummarySpec> = {
         "The due date as YYYY-MM-DD. Resolve anything relative against the lecture date given above, so 'next Thursday' becomes a real date. Use an empty string if the instructor gave no deadline at all. Never guess a date that was not stated or implied.",
       kind: "One of: assignment, reading, quiz, exam, project, other.",
       action_items:
-        "Every assignment, reading, quiz, exam, or project the class was told to do, whether or not a deadline came with it. An undated assignment still belongs here, with an empty due_date. Work to hand in or sit, never advice about what to study: 'know the four forms' is a summary point, not an action item. Empty list only if nothing at all was assigned. Never invent one",
+        "Every assignment, reading, quiz, exam, or project the class was told to do, whether or not a deadline came with it. An undated assignment still belongs here, with an empty due_date. Work to hand in or sit, never advice about what to study: 'know the four forms' is a summary point, not an action item. Empty list only if nothing at all was assigned. Never invent one.",
     }),
   },
   sous: {
