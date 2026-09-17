@@ -25,6 +25,7 @@ import { Hono } from "hono";
 import * as db from "./db";
 import type { AppEnv } from "./env";
 import { notYoursPage, page } from "./pages";
+import { browserOnly } from "./session";
 import { plusSeconds, randomId, sha256Hex } from "./util";
 
 export const PANEL_CODE_SECONDS = 300;
@@ -67,6 +68,11 @@ panel.post("/device/public-url", async (c) => {
 });
 
 panel.get("/panel/authorize", async (c) => {
+  // The panel sends its owner's browser here; the panel itself never follows
+  // this link, and a token that did could mint a sign-in code for any Mac on
+  // the account.
+  const refusal = browserOnly(c);
+  if (refusal) return refusal;
   const deviceId = c.req.query("device") ?? "";
   const redirectUri = c.req.query("redirect_uri") ?? "";
   const state = c.req.query("state") ?? "";

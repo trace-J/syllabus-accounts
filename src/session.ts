@@ -52,15 +52,42 @@ export const sessionMiddleware: MiddlewareHandler<AppEnv> = async (c, next) => {
   const id = await sessionAccountId(c);
   if (id) {
     const account = await accountById(c.env.DB, id);
-    if (account) c.set("account", account);
+    if (account) {
+      c.set("account", account);
+      c.set("authKind", "session");
+    }
   }
   await next();
 };
 
-/** For browser form posts: the request must come from our own origin. */
+/**
+ * For browser form posts: the request must come from our own origin.
+ *
+ * This says where a browser thinks it is, and nothing about who is asking. A
+ * script sets Origin to whatever it likes, so this is a second lock on a door
+ * that browserOnly() has to be the first lock on.
+ */
 export function sameOrigin(c: Context<AppEnv>): boolean {
   const origin = c.req.header("Origin") ?? "";
   if (origin) return origin === c.env.PUBLIC_URL;
   const referer = c.req.header("Referer") ?? "";
   return referer.startsWith(c.env.PUBLIC_URL + "/");
+}
+
+/**
+ * Refuses a panel's device token on a route only a person should reach.
+ *
+ * Administering the account is not something a panel does on its owner's
+ * behalf: connecting another Mac, removing one, disconnecting Drive, minting
+ * a panel sign-in code. A device token is a credential that lives on a laptop
+ * for months, and a copy of one used to be enough to enroll a replacement Mac
+ * and remove the real one, which is the opposite of what revoking it should
+ * do. Returns the refusal, or null to carry on.
+ */
+export function browserOnly(c: Context<AppEnv>): Response | null {
+  if (c.get("authKind") !== "device") return null;
+  return c.json(
+    { error: "browser_session_required", detail: "Sign in at " + c.env.PUBLIC_URL + " to do this." },
+    403,
+  );
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { claimDevice, get, postForm, postJson, signedInAs } from "./helpers";
+import { claimDevice, get, ORIGIN, postForm, postJson, signedInAs } from "./helpers";
 
 describe("claiming a panel", () => {
   it("hands out a code a person can type", async () => {
@@ -103,5 +103,102 @@ describe("claiming a panel", () => {
     expect(removed.status).toBe(302);
     expect((await get("/me", { Authorization: "Bearer " + mine.token })).status).toBe(401);
     expect(await (await get("/", { Cookie: mine.cookie })).text()).not.toContain("My Mac");
+  });
+});
+
+/**
+ * SEC-03 from the September 16 audit. A device token used to be interchangeable
+ * with its owner's browser session, because both put an account into the same
+ * place on the request. A copy of one taken off a laptop could connect another
+ * Mac, remove the Mac it was taken from, and outlive being revoked.
+ */
+describe("a device token is not a person", () => {
+  it("cannot approve another Mac, with or without a plausible Origin", async () => {
+    const { token } = await claimDevice("me@example.com", "My Mac");
+    const started = (await (await postJson("/device/start", { name: "Not Mine" })).json()) as {
+      device_code: string;
+      user_code: string;
+    };
+
+    const headerSets: Record<string, string>[] = [
+      { Authorization: "Bearer " + token },
+      { Authorization: "Bearer " + token, Referer: ORIGIN + "/device" },
+    ];
+    for (const headers of headerSets) {
+      const res = await postForm("/device/approve", { user_code: started.user_code }, headers);
+      expect(res.status).toBe(403);
+      expect(((await res.json()) as { error: string }).error).toBe("browser_session_required");
+    }
+
+    // And no token was left waiting to be collected.
+    const polled = await postJson("/device/poll", { device_code: started.device_code });
+    expect(((await polled.json()) as { error: string }).error).toBe("authorization_pending");
+  });
+
+  it("cannot remove another Mac on the same account", async () => {
+    const first = await claimDevice("me@example.com", "First Mac");
+    const other = (await (await postJson("/device/start", { name: "Second Mac" })).json()) as {
+      device_code: string;
+      user_code: string;
+    };
+    await postForm("/device/approve", { user_code: other.user_code }, { Cookie: first.cookie });
+    const otherDevice = (await (await postJson("/device/poll", { device_code: other.device_code })).json()) as {
+      token: string;
+      device: { id: string };
+    };
+
+    const res = await postForm(`/devices/${otherDevice.device.id}/revoke`, {}, { Authorization: "Bearer " + first.token });
+    expect(res.status).toBe(403);
+    expect((await get("/me", { Authorization: "Bearer " + otherDevice.token })).status).toBe(200);
+  });
+
+  it("cannot disconnect Drive or mint a panel sign-in code", async () => {
+    const { token, deviceId } = await claimDevice("me@example.com");
+    expect((await postForm("/drive/disconnect", {}, { Authorization: "Bearer " + token })).status).toBe(403);
+    expect((await get("/drive/connect", { Authorization: "Bearer " + token })).status).toBe(403);
+    const authorize = await get(
+      `/panel/authorize?device=${deviceId}&redirect_uri=${encodeURIComponent("https://panel.test/back")}&state=xyz`,
+      { Authorization: "Bearer " + token },
+    );
+    expect(authorize.status).toBe(403);
+  });
+
+  it("still does everything a panel is supposed to do", async () => {
+    const { token } = await claimDevice("me@example.com");
+    expect((await get("/me", { Authorization: "Bearer " + token })).status).toBe(200);
+    expect((await get("/drive/status", { Authorization: "Bearer " + token })).status).toBe(200);
+    expect((await postJson("/device/public-url", { public_url: "https://mine.test" }, { Authorization: "Bearer " + token })).status).toBe(200);
+    // Signing itself out is its own business, and still works.
+    expect((await postJson("/device/revoke", {}, { Authorization: "Bearer " + token })).status).toBe(200);
+  });
+});
+
+describe("signing out every Mac", () => {
+  it("takes the replacements with it and leaves other accounts alone", async () => {
+    const mine = await claimDevice("me@example.com", "My Mac");
+    const second = (await (await postJson("/device/start", { name: "Spare" })).json()) as {
+      device_code: string;
+      user_code: string;
+    };
+    await postForm("/device/approve", { user_code: second.user_code }, { Cookie: mine.cookie });
+    const spare = (await (await postJson("/device/poll", { device_code: second.device_code })).json()) as { token: string };
+    const theirs = await claimDevice("them@example.com", "Their Mac");
+
+    const res = await postForm("/devices/revoke-all", {}, { Cookie: mine.cookie });
+    expect(res.status).toBe(302);
+    expect((await get("/me", { Authorization: "Bearer " + mine.token })).status).toBe(401);
+    expect((await get("/me", { Authorization: "Bearer " + spare.token })).status).toBe(401);
+    expect((await get("/me", { Authorization: "Bearer " + theirs.token })).status).toBe(200);
+
+    // A fresh claim afterwards works, on the account's new version.
+    const again = await claimDevice("me@example.com", "Replacement");
+    expect((await get("/me", { Authorization: "Bearer " + again.token })).status).toBe(200);
+  });
+
+  it("is not something a device token can do, and needs our own origin", async () => {
+    const { token, cookie } = await claimDevice("me@example.com");
+    expect((await postForm("/devices/revoke-all", {}, { Authorization: "Bearer " + token })).status).toBe(403);
+    expect((await postForm("/devices/revoke-all", {}, { Cookie: cookie, Origin: "https://evil.test" })).status).toBe(403);
+    expect((await get("/me", { Authorization: "Bearer " + token })).status).toBe(200);
   });
 });

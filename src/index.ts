@@ -5,6 +5,11 @@
  * session cookie set by the Google sign-in (google.ts). A panel running on
  * somebody's Mac carries a device token as a bearer (devices.ts). Either
  * way the handlers see c.var.account, and a panel also sees c.var.device.
+ *
+ * Which of the two it was is c.var.authKind, and routes that administer the
+ * account rather than serve a panel say so with browserOnly(). Sharing one
+ * c.var.account between the two kinds is what let a stolen device token
+ * enroll a replacement Mac and remove the one it was stolen from.
  */
 
 import { Hono } from "hono";
@@ -18,7 +23,7 @@ import { proxy } from "./proxy";
 import { panelUrl, relay, relayState } from "./relay";
 import { settings } from "./settings";
 import { drive } from "./drive";
-import { sameOrigin, sessionMiddleware } from "./session";
+import { sessionMiddleware } from "./session";
 import { DEVICE_TOKEN_PREFIX, sha256Hex } from "./util";
 
 const app = new Hono<AppEnv>();
@@ -26,12 +31,14 @@ const app = new Hono<AppEnv>();
 app.use("*", async (c, next) => {
   c.set("account", null);
   c.set("device", null);
+  c.set("authKind", null);
   const auth = c.req.header("Authorization") ?? "";
   if (auth.startsWith("Bearer " + DEVICE_TOKEN_PREFIX)) {
     const found = await db.resolveDeviceToken(c.env.DB, await sha256Hex(auth.slice(7)));
     if (!found) return c.json({ error: "invalid_token" }, 401);
     c.set("account", found.account);
     c.set("device", found.device);
+    c.set("authKind", "device");
     c.executionCtx.waitUntil(db.touchDevice(c.env.DB, found.device.id));
     return next();
   }
@@ -80,10 +87,6 @@ app.route("/", relay);
 app.route("/", settings);
 app.route("/", drive);
 app.route("/", proxy);
-
-// The form-post logout in google.ts is fine cross-origin only because it
-// signs the person out; anything that changes state checks sameOrigin.
-void sameOrigin;
 
 app.notFound((c) => c.text("Not found", 404));
 app.onError((err, c) => {
