@@ -202,3 +202,59 @@ describe("signing out every Mac", () => {
     expect((await get("/me", { Authorization: "Bearer " + token })).status).toBe(200);
   });
 });
+
+/**
+ * SEC-07 from the September 16 audit. /device/start answers before anybody
+ * has proved who they are, and it writes a row and burns a user code every
+ * time. Thirty-one consecutive anonymous requests were accepted, each one
+ * allocating a new pending claim.
+ */
+describe("the open device routes have a limit", () => {
+  const from = (ip: string) => ({ "CF-Connecting-IP": ip });
+
+  it("stops one source from allocating claims without end", async () => {
+    const codes = new Set<string>();
+    let refused = 0;
+    for (let i = 0; i < 20; i++) {
+      const res = await postJson("/device/start", { name: "Flood" }, from("198.51.100.7"));
+      if (res.status === 429) {
+        refused += 1;
+        expect(res.headers.get("Retry-After")).toBeTruthy();
+      } else {
+        expect(res.status).toBe(200);
+        codes.add(((await res.json()) as { user_code: string }).user_code);
+      }
+    }
+    expect(codes.size).toBeLessThanOrEqual(10);
+    expect(refused).toBeGreaterThan(0);
+
+    // A different Mac somewhere else is unaffected by that one's behavior.
+    const elsewhere = await postJson("/device/start", { name: "Innocent" }, from("198.51.100.8"));
+    expect(elsewhere.status).toBe(200);
+  });
+
+  it("limits polling too, and a panel's own pace is nowhere near it", async () => {
+    const started = (await (await postJson("/device/start", {}, from("198.51.100.9"))).json()) as {
+      device_code: string;
+    };
+    // A real panel polls every 5 seconds: twelve times in the window below.
+    for (let i = 0; i < 12; i++) {
+      const res = await postJson("/device/poll", { device_code: started.device_code }, from("198.51.100.9"));
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe("authorization_pending");
+    }
+    // Past the limit it answers slow_down, which the panel's claim loop waits
+    // on rather than treating as a refusal: a claim in progress survives.
+    let sawSlowDown = false;
+    for (let i = 0; i < 60 && !sawSlowDown; i++) {
+      const res = await postJson("/device/poll", { device_code: started.device_code }, from("198.51.100.9"));
+      sawSlowDown = ((await res.json()) as { error: string }).error === "slow_down";
+    }
+    expect(sawSlowDown).toBe(true);
+  });
+
+  it("still lets a person claim a Mac normally", async () => {
+    const { token } = await claimDevice("normal@example.com", "An Ordinary Mac");
+    expect((await get("/me", { Authorization: "Bearer " + token })).status).toBe(200);
+  });
+});

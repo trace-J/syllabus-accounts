@@ -5,6 +5,21 @@ import { SESSION_COOKIE } from "../src/session";
 
 export const ORIGIN = "https://accounts.test";
 
+/**
+ * A different client address for each request, unless a test names one.
+ *
+ * The open device routes are rate limited per source address, and a test
+ * suite hitting them from one address is not what the limit is for: every
+ * request here stands for a different Mac somewhere. A test that means to
+ * exercise the limit passes its own CF-Connecting-IP and gets the sharing
+ * behavior back.
+ */
+let clients = 0;
+function newClient(): Record<string, string> {
+  clients += 1;
+  return { "CF-Connecting-IP": `203.0.113.${clients % 250}:${clients}` };
+}
+
 /** An account in the test database, plus a Cookie header that is its session. */
 export async function signedInAs(email: string, sub = "sub-" + email) {
   const account = await upsertAccount(env.DB, { sub, email, name: "Test Person", picture: "" });
@@ -18,13 +33,13 @@ export async function signedInAs(email: string, sub = "sub-" + email) {
 }
 
 export function get(path: string, headers: Record<string, string> = {}) {
-  return SELF.fetch(ORIGIN + path, { headers, redirect: "manual" });
+  return SELF.fetch(ORIGIN + path, { headers: { ...newClient(), ...headers }, redirect: "manual" });
 }
 
 export function postJson(path: string, body: unknown, headers: Record<string, string> = {}) {
   return SELF.fetch(ORIGIN + path, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
+    headers: { "Content-Type": "application/json", ...newClient(), ...headers },
     body: JSON.stringify(body),
     redirect: "manual",
   });
@@ -33,7 +48,7 @@ export function postJson(path: string, body: unknown, headers: Record<string, st
 export function postForm(path: string, fields: Record<string, string>, headers: Record<string, string> = {}) {
   return SELF.fetch(ORIGIN + path, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Origin: ORIGIN, ...headers },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Origin: ORIGIN, ...newClient(), ...headers },
     body: new URLSearchParams(fields),
     redirect: "manual",
   });

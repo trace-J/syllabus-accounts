@@ -12,7 +12,7 @@
  * in plain form only in the one response that carries it.
  */
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import * as db from "./db";
 import type { AppEnv } from "./env";
 import { approvedPage, devicePage } from "./pages";
@@ -23,6 +23,38 @@ export const CODE_SECONDS = 900;
 export const POLL_INTERVAL = 5;
 const PROFILES = new Set(["syllabus", "sous"]);
 
+/**
+ * What the two open routes allow, and why they need anything at all.
+ *
+ * /device/start and /device/poll are the only routes here that answer before
+ * anybody has proved who they are; the per-account limits protecting the rest
+ * of the service have nothing to key on. Unlimited, /device/start is a free
+ * way to make this service write a database row per request and to churn the
+ * user-code space that people read off a screen.
+ *
+ * A real panel starts one claim per sign-in and polls it every POLL_INTERVAL
+ * seconds until a person types the code, so the limits below are far above
+ * anything a Mac does and only bite on a script. They are keyed by source
+ * address, which is a weak identifier that costs an attacker something to
+ * vary; PENDING_CAP is the backstop that does not depend on the key at all.
+ */
+const START_LIMIT = 10;
+const START_WINDOW_SECONDS = 600;
+const POLL_LIMIT = 60;
+const POLL_WINDOW_SECONDS = 60;
+const PENDING_CAP = 500;
+
+/** Who is asking, as well as this can be known at the edge. */
+function source(c: Context<AppEnv>): string {
+  return c.req.header("CF-Connecting-IP") || c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() || "unknown";
+}
+
+function rateLimited(c: Context<AppEnv>, limit: number, windowSeconds: number, retryAfter: number) {
+  return c.json({ error: "rate_limited", limit, window_seconds: windowSeconds }, 429, {
+    "Retry-After": String(retryAfter),
+  });
+}
+
 export const devices = new Hono<AppEnv>();
 
 function tidyName(raw: unknown): string {
@@ -30,10 +62,23 @@ function tidyName(raw: unknown): string {
 }
 
 devices.post("/device/start", async (c) => {
+  const gate = await db.hitRateLimit(c.env.DB, `device-start:${source(c)}`, START_LIMIT, START_WINDOW_SECONDS);
+  if (!gate.allowed) return rateLimited(c, START_LIMIT, START_WINDOW_SECONDS, gate.retryAfter);
+
   const body = (await c.req.json().catch(() => ({}))) as { profile?: string; name?: string };
   const profile = PROFILES.has(String(body.profile)) ? String(body.profile) : "syllabus";
   const name = tidyName(body.name);
   await db.sweepDeviceCodes(c.env.DB);
+  // Expired windows are of no further use and this is the quietest route
+  // that runs often enough to clear them.
+  await db.sweepRateLimits(c.env.DB, Math.floor(Date.now() / 1000) - 3 * START_WINDOW_SECONDS);
+
+  // The limit above is per source; this one is not, so a spread-out flood
+  // still cannot fill the table or exhaust the codes people have to read.
+  if ((await db.pendingDeviceCodes(c.env.DB)) >= PENDING_CAP) {
+    console.log(`device/start refused: ${PENDING_CAP} claims already pending`);
+    return c.json({ error: "too_many_pending" }, 503, { "Retry-After": String(CODE_SECONDS) });
+  }
 
   const deviceCode = randomId(32);
   let userCode = newUserCode();
@@ -96,6 +141,18 @@ devices.post("/device/approve", async (c) => {
 });
 
 devices.post("/device/poll", async (c) => {
+  // slow_down rather than our own refusal: it is what RFC 8628 says a token
+  // endpoint answers a client polling too fast, and a panel already handles
+  // it by waiting longer (run_claim in intake/account.py). Anything else
+  // reads to that loop as a refusal and abandons a claim that is still good,
+  // which would turn a shared address into a sign-in that cannot finish.
+  const gate = await db.hitRateLimit(c.env.DB, `device-poll:${source(c)}`, POLL_LIMIT, POLL_WINDOW_SECONDS);
+  if (!gate.allowed) {
+    return c.json({ error: "slow_down", interval: POLL_INTERVAL * 2 }, 400, {
+      "Retry-After": String(gate.retryAfter),
+    });
+  }
+
   const body = (await c.req.json().catch(() => ({}))) as { device_code?: string };
   const deviceCode = String(body.device_code ?? "");
   if (!deviceCode) return c.json({ error: "invalid_request" }, 400);

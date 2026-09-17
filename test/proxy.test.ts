@@ -544,3 +544,91 @@ describe("the ceiling across every account", () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+/**
+ * SEC-06 from the September 16 audit. The size cap was enforced against the
+ * Content-Length header, which is a claim the sender makes about itself. A
+ * streamed request does not send one at all, and req.json() then read until
+ * the sender stopped: the cap held for well-behaved callers only.
+ */
+describe("the size cap is about bytes, not about what the sender claims", () => {
+  /** A request whose body arrives in chunks, so the runtime sends no length. */
+  function streamed(path: string, chunks: string[], headers: Record<string, string>, type: string) {
+    const body = new ReadableStream({
+      start(controller) {
+        const encoder = new TextEncoder();
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+        controller.close();
+      },
+    });
+    return SELF.fetch(ORIGIN + path, {
+      method: "POST",
+      headers: { "Content-Type": type, ...headers },
+      body,
+      duplex: "half",
+      redirect: "manual",
+    } as RequestInit);
+  }
+
+  it("refuses an oversized streamed summary that declares no length", async () => {
+    const calls = upstream(summaryOk());
+    const { token } = await claimDevice("streamer@example.com");
+
+    // Over 1MiB, carried in a field the handler never looks at, with the
+    // transcript itself small enough to pass the character limit.
+    const padding = "x".repeat(200_000);
+    const res = await streamed(
+      "/proxy/summarize",
+      ['{"transcript":"a short lecture","subject":"ACCT","ignored":"', padding, padding, padding, padding, padding, padding, '"}'],
+      bearer(token),
+      "application/json",
+    );
+    expect(res.status).toBe(413);
+    expect(((await res.json()) as { error: string }).error).toBe("too_large");
+    expect(calls).toHaveLength(0);
+  });
+
+  /**
+   * Audio was already refused at this size, by the audio.size check after the
+   * multipart body had been buffered and parsed. What changed is where: the
+   * read now stops at the cap, so the megabytes are never all held at once.
+   * That is not visible in a status code, so this is a guard on the answer
+   * rather than a reproduction of the old behavior.
+   */
+  it("refuses an oversized streamed audio upload the same way", async () => {
+    const calls = upstream(transcriptionOk());
+    const { token } = await claimDevice("streamer2@example.com");
+    const chunk = "y".repeat(1_000_000);
+    const res = await streamed(
+      "/proxy/transcribe",
+      ["--b\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"c.m4a\"\r\n\r\n", ...Array(13).fill(chunk), "\r\n--b--\r\n"],
+      bearer(token),
+      "multipart/form-data; boundary=b",
+    );
+    expect(res.status).toBe(413);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("still takes an ordinary streamed request that fits", async () => {
+    const calls = upstream(summaryOk());
+    const { token } = await claimDevice("streamer3@example.com");
+    const res = await streamed(
+      "/proxy/summarize",
+      ['{"transcript":"a lecture about ', "costing ".repeat(500), '","subject":"ACCT"}'],
+      bearer(token),
+      "application/json",
+    );
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(1);
+  });
+
+  /** Also a guard rather than a reproduction: these were 400 before too. */
+  it("answers a body that is not a JSON object with 400, however it arrives", async () => {
+    const { token } = await claimDevice("notjson@example.com");
+    expect((await postJson("/proxy/summarize", "just a string", bearer(token))).status).toBe(400);
+    expect((await postJson("/proxy/summarize", [1, 2, 3], bearer(token))).status).toBe(400);
+    const deep = "[".repeat(50_000) + "]".repeat(50_000);
+    const res = await streamed("/proxy/summarize", [deep], bearer(token), "application/json");
+    expect([400, 413]).toContain(res.status);
+  });
+});
