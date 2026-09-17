@@ -399,13 +399,44 @@ describe("what is left", () => {
 
     const first = (await (await get("/proxy/usage", bearer(token))).json()) as Record<string, any>;
     expect(first.source).toBe("trial");
-    expect(first.audio_seconds).toEqual({ used: 3600, allowance: TRIAL_ALLOWANCE.audio_seconds });
+    expect(first.audio_seconds).toEqual({
+      used: 3600, allowance: TRIAL_ALLOWANCE.audio_seconds,
+      left: TRIAL_ALLOWANCE.audio_seconds - 3600,
+    });
     expect(first.period).toBe(new Date().toISOString().slice(0, 7));
 
     await db.putAllowance(env.DB, account.id, 45 * 3600, 900_000, "pro");
     const second = (await (await get("/proxy/usage", bearer(token))).json()) as Record<string, any>;
     expect(second.source).toBe("pro");
     expect(second.audio_seconds.allowance).toBe(45 * 3600);
+  });
+
+  it("says how much lecture is left, on whichever meter runs out first", async () => {
+    const { account, token, deviceId } = await claimDevice("both-meters@example.com");
+
+    // Fresh account: the audio allowance is what binds, because the trial's
+    // tokens are deliberate headroom rather than a second product limit.
+    const fresh = (await (await get("/proxy/usage", bearer(token))).json()) as Record<string, any>;
+    expect(fresh.recordable_seconds).toBe(TRIAL_ALLOWANCE.audio_seconds);
+
+    // The shape of the day this was written: hours of audio left, and a
+    // summary allowance that cannot pay for a full lecture. The audio figure
+    // alone would have promised 101 minutes.
+    await db.recordUsage(env.DB, account.id, deviceId, "transcribe", 11_915);
+    await db.recordUsage(env.DB, account.id, deviceId, "summarize", 123_427);
+    const tight = (await (await get("/proxy/usage", bearer(token))).json()) as Record<string, any>;
+    expect(tight.audio_seconds.left).toBe(6_085);
+    expect(tight.summary_tokens.left).toBe(26_573);
+    // (26,573 - 16,000) * 4 / 12, and well under the 6,085 seconds of audio.
+    expect(tight.recordable_seconds).toBe(3_524);
+
+    // Below the reservation's fixed floor nothing can be summarized, so
+    // nothing can be recorded through, however much audio is left.
+    await db.recordUsage(env.DB, account.id, deviceId, "summarize", 20_000);
+    const spent = (await (await get("/proxy/usage", bearer(token))).json()) as Record<string, any>;
+    expect(spent.summary_tokens.left).toBe(6_573);
+    expect(spent.audio_seconds.left).toBe(6_085);
+    expect(spent.recordable_seconds).toBe(0);
   });
 
   it("counts each account separately", async () => {

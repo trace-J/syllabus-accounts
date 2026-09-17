@@ -462,6 +462,37 @@ proxy.post("/proxy/summarize", async (c) => {
   return c.json({ summary, tokens });
 });
 
+/**
+ * Characters of transcript per second of lecture audio.
+ *
+ * Measured on real lectures through this service: 3,880 seconds produced
+ * 49,898 characters, 4,328 produced about 52,000, 2,979 about 28,000. Twelve
+ * sits in the middle and errs high, which is the safe direction for a number
+ * whose only job is to warn somebody before they record.
+ */
+const TRANSCRIPT_CHARS_PER_SECOND = 12;
+
+/**
+ * How much more lecture this account can take all the way through, in seconds.
+ *
+ * Both meters have to carry a recording: the audio is charged in seconds and
+ * the summary of that same audio is charged in tokens. A panel told only the
+ * audio figure would promise an hour the summary cannot pay for, which is
+ * exactly what happened the day this was written. The account had 101 minutes
+ * of audio left, room for a 58-minute summary, and recorded for 65.
+ *
+ * The summary's reservation carries a fixed floor, SUMMARY_MAX_TOKENS, held
+ * for output that has not been generated yet. An account with less than that
+ * left can summarize nothing at all, whatever its audio balance says, so the
+ * floor is subtracted before the rest is converted into seconds.
+ */
+function recordableSeconds(audioLeft: number, tokensLeft: number): number {
+  const forSummary = tokensLeft <= SUMMARY_MAX_TOKENS
+    ? 0
+    : Math.floor(((tokensLeft - SUMMARY_MAX_TOKENS) * 4) / TRANSCRIPT_CHARS_PER_SECOND);
+  return Math.max(0, Math.min(audioLeft, forSummary));
+}
+
 /** What is left this month, for a panel that wants to say so before recording. */
 proxy.get("/proxy/usage", async (c) => {
   const account = c.get("account");
@@ -471,10 +502,16 @@ proxy.get("/proxy/usage", async (c) => {
     db.usedThisPeriod(c.env.DB, account.id, "transcribe"),
     db.usedThisPeriod(c.env.DB, account.id, "summarize"),
   ]);
+  const audioLeft = Math.max(0, allowed.audio_seconds - audio);
+  const tokensLeft = Math.max(0, allowed.summary_tokens - tokens);
   return c.json({
     period: db.usagePeriod(),
     source: allowed.source,
-    audio_seconds: { used: audio, allowance: allowed.audio_seconds },
-    summary_tokens: { used: tokens, allowance: allowed.summary_tokens },
+    audio_seconds: { used: audio, allowance: allowed.audio_seconds, left: audioLeft },
+    summary_tokens: { used: tokens, allowance: allowed.summary_tokens, left: tokensLeft },
+    // The one number a panel can act on. Working it out here rather than
+    // there keeps it next to the reservation rules it is derived from; a
+    // panel doing its own arithmetic would drift the first time they change.
+    recordable_seconds: recordableSeconds(audioLeft, tokensLeft),
   });
 });
