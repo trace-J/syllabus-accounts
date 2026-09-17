@@ -21,13 +21,18 @@
  * Three things bound the damage from a stolen device token, which used to
  * read somebody's own data and now spends money:
  *
- *   1. A monthly allowance per account, checked BEFORE the upstream call.
- *      Slice 4 (Stripe) writes real allowances; until then every account gets
- *      TRIAL_ALLOWANCE below.
+*   1. A monthly allowance per account, RESERVED before the upstream call and
+ *      settled to what it actually cost afterwards. Reserving rather than
+ *      checking is what makes two simultaneous calls see each other; a check
+ *      followed by a write lets both through. Slice 4 (Stripe) writes real
+ *      allowances; until then every account gets TRIAL_ALLOWANCE below.
  *   2. A per-minute rate limit per account on both endpoints, so a token that
  *      leaks cannot burn a month's allowance in a minute.
  *   3. Hard caps on request size and on transcript length, refused before
  *      anything is read or forwarded.
+ *   4. A ceiling across every account together (GLOBAL_CEILING), so a bad
+ *      afternoon has a worst case that does not depend on how many accounts
+ *      exist or on anything a caller says.
  *
  * Upstream errors are never passed through. A 401 from OpenAI means our key,
  * not the caller's, so the caller is told the provider refused and nothing
@@ -103,6 +108,17 @@ const RATE_LIMITS = { transcribe: 20, summarize: 5 } as const;
  */
 export const TRIAL_ALLOWANCE = { audio_seconds: 5 * 3600, summary_tokens: 150_000 };
 
+/**
+ * What this whole service may spend in a month, across every account.
+ *
+ * Per-account allowances answer "what can one caller cost"; this answers
+ * "what can the bill be", which is the question a card statement asks. It is
+ * set well above any plausible real month and is meant to be hit only when
+ * something is wrong: a leak of many tokens at once, a retry storm, a bug
+ * here. Raise it deliberately when real accounts approach it.
+ */
+export const GLOBAL_CEILING = { audio_seconds: 400 * 3600, summary_tokens: 12_000_000 };
+
 export const proxy = new Hono<AppEnv>();
 
 // --- Small helpers ----------------------------------------------------------
@@ -138,6 +154,14 @@ function overAllowance(kind: db.UsageKind, used: number, wanted: number, allowed
       allowance: allowed,
       period: db.usagePeriod(),
     },
+  };
+}
+
+function ceilingReached(kind: db.UsageKind): Refusal {
+  console.log(`proxy: the ${kind} ceiling for ${db.usagePeriod()} is reached; refusing until it is raised`);
+  return {
+    status: 402,
+    body: { error: "service_ceiling", kind, period: db.usagePeriod() },
   };
 }
 
@@ -220,8 +244,15 @@ proxy.post("/proxy/transcribe", async (c) => {
   }
 
   const allowed = await allowanceFor(c.env.DB, account.id);
-  const used = await db.usedThisPeriod(c.env.DB, account.id, "transcribe");
-  if (used + seconds > allowed.audio_seconds) {
+  await db.sweepReservations(c.env.DB, account.id);
+  if ((await db.usedGlobally(c.env.DB, "transcribe")) + seconds > GLOBAL_CEILING.audio_seconds) {
+    return refuse(c, ceilingReached("transcribe"));
+  }
+  // Held before the call, not billed after it: a second request arriving at
+  // the same moment sees this one's seconds already spoken for.
+  const held = await db.reserveUsage(c.env.DB, account.id, device.id, "transcribe", seconds, allowed.audio_seconds);
+  if (!held) {
+    const used = await db.usedThisPeriod(c.env.DB, account.id, "transcribe");
     return refuse(c, overAllowance("transcribe", used, seconds, allowed.audio_seconds));
   }
 
@@ -239,12 +270,19 @@ proxy.post("/proxy/transcribe", async (c) => {
       body: upstream,
     });
   } catch {
+    await db.releaseUsage(c.env.DB, held.id);
     return refuse(c, providerFailed("openai transcription", 0));
   }
-  if (!res.ok) return refuse(c, providerFailed("openai transcription", res.status));
+  if (!res.ok) {
+    await db.releaseUsage(c.env.DB, held.id);
+    return refuse(c, providerFailed("openai transcription", res.status));
+  }
 
   const text = (await res.text()).trim();
-  await db.recordUsage(c.env.DB, account.id, device.id, "transcribe", seconds);
+  // Audio seconds are known before the call, so settling confirms the
+  // reservation rather than correcting it. It still has to happen: a
+  // reservation nobody settles is swept back to the account in the end.
+  await db.settleUsage(c.env.DB, held.id, seconds);
   return c.json({ text, audio_seconds: seconds });
 });
 
@@ -295,8 +333,16 @@ proxy.post("/proxy/summarize", async (c) => {
   // thumb and errs high on transcript prose, which is the safe direction.
   const estimate = Math.ceil(transcript.length / 4) + SUMMARY_MAX_TOKENS;
   const allowed = await allowanceFor(c.env.DB, account.id);
-  const used = await db.usedThisPeriod(c.env.DB, account.id, "summarize");
-  if (used + estimate > allowed.summary_tokens) {
+  await db.sweepReservations(c.env.DB, account.id);
+  if ((await db.usedGlobally(c.env.DB, "summarize")) + estimate > GLOBAL_CEILING.summary_tokens) {
+    return refuse(c, ceilingReached("summarize"));
+  }
+  // The estimate is held for the whole call and corrected to the real cost
+  // below. Two summaries started together therefore cost the account two
+  // estimates' worth of headroom, not one.
+  const held = await db.reserveUsage(c.env.DB, account.id, device.id, "summarize", estimate, allowed.summary_tokens);
+  if (!held) {
+    const used = await db.usedThisPeriod(c.env.DB, account.id, "summarize");
     return refuse(c, overAllowance("summarize", used, estimate, allowed.summary_tokens));
   }
 
@@ -319,9 +365,13 @@ proxy.post("/proxy/summarize", async (c) => {
       }),
     });
   } catch {
+    await db.releaseUsage(c.env.DB, held.id);
     return refuse(c, providerFailed("anthropic messages", 0));
   }
-  if (!res.ok) return refuse(c, providerFailed("anthropic messages", res.status));
+  if (!res.ok) {
+    await db.releaseUsage(c.env.DB, held.id);
+    return refuse(c, providerFailed("anthropic messages", res.status));
+  }
 
   const answer = (await res.json().catch(() => null)) as {
     content?: { type: string; name?: string; input?: unknown }[];
@@ -329,8 +379,10 @@ proxy.post("/proxy/summarize", async (c) => {
     stop_reason?: string;
   } | null;
   const tokens = (answer?.usage?.input_tokens ?? 0) + (answer?.usage?.output_tokens ?? 0);
-  // Billed whatever came back, because the tokens were spent either way.
-  await db.recordUsage(c.env.DB, account.id, device.id, "summarize", tokens || estimate);
+  // Settled to whatever came back, because the tokens were spent either way.
+  // A response that does not say costs the estimate rather than nothing, and
+  // the unused part of the reservation goes back to the account here.
+  await db.settleUsage(c.env.DB, held.id, tokens || estimate);
 
   const block = answer?.content?.find((b) => b.type === "tool_use" && b.name === SUMMARY_TOOL);
   // An empty object is a truthy object, so `block.input` being present is not

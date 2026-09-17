@@ -2,7 +2,7 @@ import { env, SELF } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as db from "../src/db";
 import { mp4DurationSeconds } from "../src/mp4";
-import { TRIAL_ALLOWANCE } from "../src/proxy";
+import { GLOBAL_CEILING, TRIAL_ALLOWANCE } from "../src/proxy";
 import { claimDevice, get, ORIGIN, postJson } from "./helpers";
 
 afterEach(() => {
@@ -416,5 +416,131 @@ describe("what is left", () => {
 
     expect(await db.usedThisPeriod(env.DB, mine.account.id, "transcribe")).toBe(480);
     expect(await db.usedThisPeriod(env.DB, theirs.account.id, "transcribe")).toBe(0);
+  });
+});
+
+/**
+ * SEC-05 from the September 16 audit. The allowance used to be read, then the
+ * provider called, then the usage written. Two requests that arrived together
+ * both read the total from before either of them had written anything, both
+ * found room, and both spent it.
+ *
+ * A slow provider is what makes the race reproducible here: both requests are
+ * inside the window between the check and the write at the same moment, which
+ * is exactly the condition on a real Worker under two panels.
+ */
+describe("two calls at once cannot both spend the last of the allowance", () => {
+  /**
+   * A provider that takes its time. The delay holds the first request between
+   * taking the allowance and settling it, which is the window the second one
+   * has to be refused in. Waiting for both to arrive instead would deadlock,
+   * because the whole point is that the second never gets this far.
+   */
+  function slowUpstream(answer: () => Response) {
+    const calls: { url: string; init: RequestInit }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        calls.push({ url: String(input instanceof Request ? input.url : input), init: {} });
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        return answer();
+      }),
+    );
+    return calls;
+  }
+
+  it("lets one transcription through and refuses the other", async () => {
+    const calls = slowUpstream(() => new Response("the transcript", { status: 200 }));
+    const { account, token } = await claimDevice("race@example.com");
+    // Room for one 480-second chunk, not two.
+    await db.putAllowance(env.DB, account.id, 600, TRIAL_ALLOWANCE.summary_tokens, "test");
+
+    const [a, b] = await Promise.all([
+      postAudio(m4aForm(480, 480), bearer(token)),
+      postAudio(m4aForm(480, 480), bearer(token)),
+    ]);
+    const codes = [a.status, b.status].sort();
+    expect(codes).toEqual([200, 402]);
+    // The one that was refused never reached OpenAI.
+    expect(calls).toHaveLength(1);
+    expect(await db.usedThisPeriod(env.DB, account.id, "transcribe")).toBe(480);
+  });
+
+  it("lets one summary through and refuses the other", async () => {
+    const calls = slowUpstream(() =>
+      new Response(
+        JSON.stringify({
+          content: [{ type: "tool_use", name: "record_summary", input: { summary_md: "## Topic" } }],
+          usage: { input_tokens: 8000, output_tokens: 1500 },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const { account, token } = await claimDevice("race2@example.com");
+    // SUMMARY_MAX_TOKENS is 16000, so one estimate fits under 20000 and two do not.
+    await db.putAllowance(env.DB, account.id, TRIAL_ALLOWANCE.audio_seconds, 20_000, "test");
+
+    const [a, b] = await Promise.all([
+      postJson("/proxy/summarize", { transcript: "a lecture ".repeat(100), subject: "ACCT" }, bearer(token)),
+      postJson("/proxy/summarize", { transcript: "a lecture ".repeat(100), subject: "ACCT" }, bearer(token)),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 402]);
+    expect(calls).toHaveLength(1);
+    // Settled to what the provider reported, not left at the estimate.
+    expect(await db.usedThisPeriod(env.DB, account.id, "summarize")).toBe(9500);
+  });
+});
+
+describe("a reservation that is not spent goes back", () => {
+  it("is released when the provider fails, so a retry still fits", async () => {
+    upstream(() => new Response("upstream is down", { status: 503 }));
+    const { account, token } = await claimDevice("failed@example.com");
+    await db.putAllowance(env.DB, account.id, 600, TRIAL_ALLOWANCE.summary_tokens, "test");
+
+    expect((await postAudio(m4aForm(480, 480), bearer(token))).status).toBe(502);
+    expect(await db.usedThisPeriod(env.DB, account.id, "transcribe")).toBe(0);
+
+    // The retry has the whole allowance to work with again.
+    upstream(transcriptionOk());
+    expect((await postAudio(m4aForm(480, 480), bearer(token))).status).toBe(200);
+    expect(await db.usedThisPeriod(env.DB, account.id, "transcribe")).toBe(480);
+  });
+
+  it("is swept when a Worker dies holding one", async () => {
+    const { account, token, deviceId } = await claimDevice("stale@example.com");
+    await db.putAllowance(env.DB, account.id, 600, TRIAL_ALLOWANCE.summary_tokens, "test");
+    const held = await db.reserveUsage(env.DB, account.id, deviceId, "transcribe", 480, 600);
+    expect(held).not.toBeNull();
+    expect(await db.usedThisPeriod(env.DB, account.id, "transcribe")).toBe(480);
+
+    // Nothing settles it, and the account is stuck behind it.
+    upstream(transcriptionOk());
+    expect((await postAudio(m4aForm(480, 480), bearer(token))).status).toBe(402);
+
+    // Older than RESERVATION_SECONDS, it is wreckage and is dropped.
+    await env.DB.prepare("UPDATE usage SET created_at = ? WHERE id = ?")
+      .bind(new Date(Date.now() - (db.RESERVATION_SECONDS + 60) * 1000).toISOString(), held!.id)
+      .run();
+    expect((await postAudio(m4aForm(480, 480), bearer(token))).status).toBe(200);
+    expect(await db.usedThisPeriod(env.DB, account.id, "transcribe")).toBe(480);
+  });
+});
+
+describe("the ceiling across every account", () => {
+  it("refuses once the service as a whole has spent its month", async () => {
+    const calls = upstream(transcriptionOk());
+    const hog = await claimDevice("hog@example.com");
+    await env.DB.prepare(
+      "INSERT INTO usage (id, account_id, device_id, kind, units, period, created_at, state) VALUES (?, ?, ?, ?, ?, ?, ?, 'final')",
+    )
+      .bind("ceiling-row", hog.account.id, hog.deviceId, "transcribe", GLOBAL_CEILING.audio_seconds, db.usagePeriod(), new Date().toISOString())
+      .run();
+
+    // A different account with its whole allowance untouched is still refused.
+    const other = await claimDevice("innocent@example.com");
+    const res = await postAudio(m4aForm(480, 480), bearer(other.token));
+    expect(res.status).toBe(402);
+    expect(((await res.json()) as { error: string }).error).toBe("service_ceiling");
+    expect(calls).toHaveLength(0);
   });
 });

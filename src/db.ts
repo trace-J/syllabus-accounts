@@ -456,9 +456,90 @@ export async function recordUsage(
   units: number,
 ): Promise<void> {
   await db
-    .prepare("INSERT INTO usage (id, account_id, device_id, kind, units, period, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .prepare("INSERT INTO usage (id, account_id, device_id, kind, units, period, created_at, state) VALUES (?, ?, ?, ?, ?, ?, ?, 'final')")
     .bind(randomId(12), accountId, deviceId, kind, Math.max(0, Math.round(units)), usagePeriod(), now())
     .run();
+}
+
+/** How long a reservation may sit before it is treated as a Worker that died. */
+export const RESERVATION_SECONDS = 900;
+
+/**
+ * Take `units` out of the account's allowance before the call, or refuse.
+ *
+ * The check and the write are one statement on purpose. Summing the period
+ * and then inserting is two, and two concurrent requests both read the sum
+ * from before either wrote, so both were told there was room for them. Here
+ * the INSERT only happens if its own WHERE still holds, and SQLite runs the
+ * whole statement as one; the loser inserts nothing and gets null back.
+ *
+ * Returns the reservation id to settle or release, or null when there is not
+ * enough left. `used` in the refusal is what the total was at that moment,
+ * reservations included.
+ */
+export async function reserveUsage(
+  db: D1Database,
+  accountId: string,
+  deviceId: string,
+  kind: UsageKind,
+  units: number,
+  allowed: number,
+): Promise<{ id: string } | null> {
+  const want = Math.max(0, Math.round(units));
+  const period = usagePeriod();
+  const row = await db
+    .prepare(
+      `INSERT INTO usage (id, account_id, device_id, kind, units, period, created_at, state)
+       SELECT ?, ?, ?, ?, ?, ?, ?, 'reserved'
+        WHERE (SELECT COALESCE(SUM(units), 0) FROM usage
+                WHERE account_id = ? AND kind = ? AND period = ?) + ? <= ?
+       RETURNING id`,
+    )
+    .bind(randomId(12), accountId, deviceId, kind, want, period, now(), accountId, kind, period, want, allowed)
+    .first<{ id: string }>();
+  return row ? { id: row.id } : null;
+}
+
+/** The call happened and cost this much. The reservation becomes the bill. */
+export async function settleUsage(db: D1Database, id: string, units: number): Promise<void> {
+  await db
+    .prepare("UPDATE usage SET units = ?, state = 'final' WHERE id = ? AND state = 'reserved'")
+    .bind(Math.max(0, Math.round(units)), id)
+    .run();
+}
+
+/** The call did not happen, or failed. Give the allowance back. */
+export async function releaseUsage(db: D1Database, id: string): Promise<void> {
+  await db.prepare("DELETE FROM usage WHERE id = ? AND state = 'reserved'").bind(id).run();
+}
+
+/**
+ * Drop reservations nothing will ever settle.
+ *
+ * A Worker that is killed between reserving and settling leaves a row holding
+ * allowance for a call that never happened. Nothing upstream takes anywhere
+ * near RESERVATION_SECONDS, so anything older than that is wreckage.
+ */
+export async function sweepReservations(db: D1Database, accountId: string): Promise<void> {
+  const cutoff = new Date(Date.now() - RESERVATION_SECONDS * 1000).toISOString();
+  await db
+    .prepare("DELETE FROM usage WHERE state = 'reserved' AND account_id = ? AND created_at < ?")
+    .bind(accountId, cutoff)
+    .run();
+}
+
+/**
+ * What every account together has spent this period: the circuit breaker.
+ *
+ * Per-account allowances bound what one caller costs. They do not bound what
+ * a bad afternoon costs, and the number that reaches a card is this one.
+ */
+export async function usedGlobally(db: D1Database, kind: UsageKind, period = usagePeriod()): Promise<number> {
+  const row = await db
+    .prepare("SELECT COALESCE(SUM(units), 0) AS total FROM usage WHERE kind = ? AND period = ?")
+    .bind(kind, period)
+    .first<{ total: number }>();
+  return row?.total ?? 0;
 }
 
 /**
