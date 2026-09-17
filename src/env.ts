@@ -26,6 +26,8 @@ export type Account = {
   picture: string;
   created_at: string;
   last_signin_at: string;
+  /** Bumped to orphan every device token this account has handed out. */
+  token_version: number;
 };
 
 export type Device = {
@@ -39,10 +41,20 @@ export type Device = {
   revoked_at: string | null;
 };
 
-/** What every handler can read once the session or bearer middleware ran. */
+/**
+ * What every handler can read once the session or bearer middleware ran.
+ *
+ * `authKind` is the one a route should test when it cares HOW the caller
+ * proved who they are. Both a browser cookie and a panel's bearer token set
+ * `account`, so `account` alone answers "whose" and never "what kind".
+ */
 export type Variables = {
   account: Account | null;
   device: Device | null;
+  authKind: AuthKind;
 };
+
+/** "session" is a person in a browser; "device" is a panel holding a token. */
+export type AuthKind = "session" | "device" | null;
 
 export type AppEnv = { Bindings: Bindings; Variables: Variables };

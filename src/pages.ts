@@ -140,6 +140,7 @@ export function accountPage(
      <h2>Your Macs</h2>
      <p class="muted">Each Mac's panel has an address here that only you can open, from any browser or phone, whenever that Mac is awake and its panel is running.</p>
      <table><tbody>${rows}</tbody></table>
+     ${devices.length ? signOutEverything : ""}
      <h2>Google Drive</h2>
      ${driveSection(grant)}
      <h2>Connect a Mac</h2>
@@ -147,6 +148,15 @@ export function accountPage(
      ${codeForm("", "")}`,
   );
 }
+
+/**
+ * For a Mac that was lost or a token that may have been copied: removing the
+ * Macs one at a time is not enough if whoever holds the token can connect
+ * more while you work, so this ends every connection in one go.
+ */
+const signOutEverything = `<p class="muted">Lost a Mac, or think someone else has a copy of its connection?
+  <form method="post" action="/devices/revoke-all" style="display:inline"><button>Sign out every Mac</button></form>
+  Each one asks for a new code the next time you open it.</p>`;
 
 function driveSection(grant: DriveGrant | null): string {
   if (grant && !grant.revoked_at) {

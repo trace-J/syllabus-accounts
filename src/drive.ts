@@ -22,7 +22,7 @@ import * as db from "./db";
 import type { AppEnv } from "./env";
 import { AUTH_URL, TOKEN_URL, checkClaims, decodeClaims, redirectUri, type Flow } from "./google";
 import { page } from "./pages";
-import { sameOrigin } from "./session";
+import { browserOnly, sameOrigin } from "./session";
 import { randomId } from "./util";
 
 export const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -33,6 +33,8 @@ const FLOW_SECONDS = 600;
 export const drive = new Hono<AppEnv>();
 
 drive.get("/drive/connect", async (c) => {
+  const refusal = browserOnly(c);
+  if (refusal) return refusal;
   const account = c.get("account");
   if (!account) return c.redirect("/login?next=" + encodeURIComponent("/drive/connect"));
   const flow: Flow = { state: randomId(18), nonce: randomId(18), next: "/", t: Date.now(), kind: "drive" };
@@ -156,6 +158,8 @@ drive.post("/drive/token", async (c) => {
 });
 
 drive.post("/drive/disconnect", async (c) => {
+  const refusal = browserOnly(c);
+  if (refusal) return refusal;
   const account = c.get("account");
   if (!account) return c.redirect("/login");
   if (!sameOrigin(c)) return c.text("This form must be submitted from " + c.env.PUBLIC_URL, 403);

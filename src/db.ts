@@ -34,6 +34,7 @@ export async function upsertAccount(db: D1Database, who: GoogleIdentity): Promis
     picture: who.picture,
     created_at: ts,
     last_signin_at: ts,
+    token_version: 0,
   };
   await db
     .prepare(
@@ -97,11 +98,36 @@ export async function revokeDevice(db: D1Database, accountId: string, deviceId: 
   return true;
 }
 
-export async function insertDeviceToken(db: D1Database, tokenHash: string, deviceId: string): Promise<void> {
+export async function insertDeviceToken(
+  db: D1Database,
+  tokenHash: string,
+  deviceId: string,
+  tokenVersion: number,
+): Promise<void> {
   await db
-    .prepare("INSERT INTO device_tokens (token_hash, device_id, created_at) VALUES (?, ?, ?)")
-    .bind(tokenHash, deviceId, now())
+    .prepare("INSERT INTO device_tokens (token_hash, device_id, created_at, token_version) VALUES (?, ?, ?, ?)")
+    .bind(tokenHash, deviceId, now(), tokenVersion)
     .run();
+}
+
+/**
+ * Incident recovery: every token on this account stops working at once, and
+ * every device is removed. One statement bumps the account past every token
+ * ever issued under it, so a replacement enrolled by a stolen token dies with
+ * the token that enrolled it. Returns how many devices were removed.
+ */
+export async function revokeEverything(db: D1Database, accountId: string): Promise<number> {
+  const ts = now();
+  await db.prepare("UPDATE accounts SET token_version = token_version + 1 WHERE id = ?").bind(accountId).run();
+  await db
+    .prepare("UPDATE device_tokens SET revoked_at = ? WHERE revoked_at IS NULL AND device_id IN (SELECT id FROM devices WHERE account_id = ?)")
+    .bind(ts, accountId)
+    .run();
+  const res = await db
+    .prepare("UPDATE devices SET revoked_at = ? WHERE account_id = ? AND revoked_at IS NULL")
+    .bind(ts, accountId)
+    .run();
+  return res.meta.changes ?? 0;
 }
 
 /** The live device and account behind a token hash, or null for anything revoked or unknown. */
@@ -117,7 +143,8 @@ export async function resolveDeviceToken(
          FROM device_tokens t
          JOIN devices d ON d.id = t.device_id
          JOIN accounts a ON a.id = d.account_id
-        WHERE t.token_hash = ? AND t.revoked_at IS NULL AND d.revoked_at IS NULL`,
+        WHERE t.token_hash = ? AND t.revoked_at IS NULL AND d.revoked_at IS NULL
+          AND t.token_version = a.token_version`,
     )
     .bind(tokenHash)
     .first<Record<string, string | null>>();
@@ -140,6 +167,7 @@ export async function resolveDeviceToken(
     picture: row.picture as string,
     created_at: row.created_at as string,
     last_signin_at: row.last_signin_at as string,
+    token_version: Number(row.token_version ?? 0),
   };
   return { device, account };
 }

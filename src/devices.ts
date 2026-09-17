@@ -16,7 +16,7 @@ import { Hono } from "hono";
 import * as db from "./db";
 import type { AppEnv } from "./env";
 import { approvedPage, devicePage } from "./pages";
-import { sameOrigin } from "./session";
+import { browserOnly, sameOrigin } from "./session";
 import { newDeviceToken, newUserCode, normalizeUserCode, plusSeconds, randomId, sha256Hex } from "./util";
 
 export const CODE_SECONDS = 900;
@@ -67,6 +67,8 @@ devices.get("/device", async (c) => {
 });
 
 devices.post("/device/approve", async (c) => {
+  const refusal = browserOnly(c);
+  if (refusal) return refusal;
   const account = c.get("account");
   if (!account) return c.redirect("/login?next=/device");
   if (!sameOrigin(c)) return c.text("This form must be submitted from " + c.env.PUBLIC_URL, 403);
@@ -106,21 +108,41 @@ devices.post("/device/poll", async (c) => {
   if (!(await db.collectDeviceCode(c.env.DB, pending.device_code_hash))) {
     return c.json({ error: "invalid_grant" }, 400);
   }
-  const token = newDeviceToken();
-  await db.insertDeviceToken(c.env.DB, await sha256Hex(token), pending.approved_device_id);
   const account = await db.accountById(c.env.DB, pending.approved_account_id);
+  if (!account) return c.json({ error: "invalid_grant" }, 400);
+  const token = newDeviceToken();
+  await db.insertDeviceToken(c.env.DB, await sha256Hex(token), pending.approved_device_id, account.token_version);
   return c.json({
     token,
-    account: account ? { id: account.id, email: account.email, name: account.name } : null,
+    account: { id: account.id, email: account.email, name: account.name },
     device: { id: pending.approved_device_id, name: pending.device_name || "A Mac", profile: pending.profile },
   });
 });
 
 /** From the account page: remove a Mac. Its token stops working at once. */
 devices.post("/devices/:id/revoke", async (c) => {
+  const refusal = browserOnly(c);
+  if (refusal) return refusal;
   const account = c.get("account");
   if (!account) return c.redirect("/login");
   if (!sameOrigin(c)) return c.text("This form must be submitted from " + c.env.PUBLIC_URL, 403);
   await db.revokeDevice(c.env.DB, account.id, c.req.param("id"));
+  return c.redirect("/");
+});
+
+/**
+ * From the account page: remove every Mac and orphan every token at once.
+ *
+ * What to reach for when a token may be in somebody else's hands and the list
+ * of Macs can no longer be trusted to be the list you enrolled.
+ */
+devices.post("/devices/revoke-all", async (c) => {
+  const refusal = browserOnly(c);
+  if (refusal) return refusal;
+  const account = c.get("account");
+  if (!account) return c.redirect("/login");
+  if (!sameOrigin(c)) return c.text("This form must be submitted from " + c.env.PUBLIC_URL, 403);
+  const removed = await db.revokeEverything(c.env.DB, account.id);
+  console.log(`${account.email} signed out every Mac (${removed})`);
   return c.redirect("/");
 });
