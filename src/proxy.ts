@@ -175,12 +175,59 @@ async function allowanceFor(database: D1Database, accountId: string) {
   };
 }
 
+function tooLarge(cap: number): Refusal {
+  return { status: 413, body: { error: "too_large", limit_bytes: cap } };
+}
+
 function declaredLength(header: string | undefined, cap: number): Refusal | null {
   const length = Number(header ?? "");
-  if (Number.isFinite(length) && length > cap) {
-    return { status: 413, body: { error: "too_large", limit_bytes: cap } };
-  }
+  if (Number.isFinite(length) && length > cap) return tooLarge(cap);
   return null;
+}
+
+/**
+ * The request body, refused the moment it passes `cap` actual bytes.
+ *
+ * Content-Length is a claim, and a chunked request does not even make it. A
+ * streamed body with no length header used to go straight into req.json(),
+ * which reads until the sender stops: the stated cap was enforced against
+ * well-behaved callers only. Here the bytes are counted as they arrive and
+ * the read is abandoned as soon as there are too many, so an oversized body
+ * is never fully held in memory, let alone parsed or forwarded.
+ *
+ * Returns the bytes, or the refusal to send back.
+ */
+async function boundedBody(c: Context<AppEnv>, cap: number): Promise<Uint8Array | Refusal> {
+  const stream = c.req.raw.body;
+  if (!stream) return new Uint8Array(0);
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > cap) {
+        await reader.cancel().catch(() => {});
+        return tooLarge(cap);
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return { status: 400, body: { error: "bad_request", detail: "the request body could not be read" } };
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return out;
+}
+
+function isRefusal(v: Uint8Array | Refusal): v is Refusal {
+  return !(v instanceof Uint8Array);
 }
 
 function label(raw: unknown): string {
@@ -213,9 +260,15 @@ proxy.post("/proxy/transcribe", async (c) => {
     });
   }
 
+  // Read to the cap first: formData() on the raw request would buffer and
+  // parse a multipart body of any size before audio.size below could object.
+  const body = await boundedBody(c, MAX_AUDIO_BYTES);
+  if (isRefusal(body)) return refuse(c, body);
   let form: FormData;
   try {
-    form = await c.req.formData();
+    form = await new Response(body, {
+      headers: { "Content-Type": c.req.header("Content-Type") ?? "" },
+    }).formData();
   } catch {
     return c.json({ error: "bad_request", detail: "expected multipart/form-data" }, 400);
   }
@@ -312,10 +365,18 @@ proxy.post("/proxy/summarize", async (c) => {
   const spec = profileSpec(device.profile);
   if (!spec) return c.json({ error: "unknown_profile" }, 400);
 
+  const raw = await boundedBody(c, MAX_SUMMARIZE_BYTES);
+  if (isRefusal(raw)) return refuse(c, raw);
   let body: { transcript?: unknown; subject?: unknown; course?: unknown; date?: unknown };
   try {
-    body = await c.req.json();
+    // JSON.parse rather than req.json(): the bytes are already read and
+    // already bounded. A body nested deeply enough to exhaust the stack
+    // throws here like any other malformed input and is answered the same way.
+    body = JSON.parse(new TextDecoder().decode(raw));
   } catch {
+    return c.json({ error: "bad_request", detail: "expected a JSON object" }, 400);
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return c.json({ error: "bad_request", detail: "expected a JSON object" }, 400);
   }
   const transcript = String(body.transcript ?? "");

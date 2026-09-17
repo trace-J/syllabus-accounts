@@ -250,6 +250,15 @@ export async function sweepDeviceCodes(db: D1Database): Promise<void> {
   await db.prepare("DELETE FROM device_codes WHERE expires_at < ?").bind(now()).run();
 }
 
+/** Claims in progress right now: the number the pending cap is set against. */
+export async function pendingDeviceCodes(db: D1Database): Promise<number> {
+  const row = await db
+    .prepare("SELECT COUNT(*) AS total FROM device_codes WHERE expires_at >= ? AND approved_account_id IS NULL")
+    .bind(now())
+    .first<{ total: number }>();
+  return row?.total ?? 0;
+}
+
 // --- Devices' public addresses, and panel sign-in codes ----------------------
 
 export async function deviceById(db: D1Database, id: string): Promise<Device | null> {
