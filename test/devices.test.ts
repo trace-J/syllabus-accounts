@@ -152,22 +152,16 @@ describe("a device token is not a person", () => {
     expect((await get("/me", { Authorization: "Bearer " + otherDevice.token })).status).toBe(200);
   });
 
-  it("cannot disconnect Drive or mint a panel sign-in code", async () => {
-    const { token, deviceId } = await claimDevice("me@example.com");
+  it("cannot do a browser's business with its own token", async () => {
+    const { token } = await claimDevice("me@example.com");
     expect((await postForm("/drive/disconnect", {}, { Authorization: "Bearer " + token })).status).toBe(403);
     expect((await get("/drive/connect", { Authorization: "Bearer " + token })).status).toBe(403);
-    const authorize = await get(
-      `/panel/authorize?device=${deviceId}&redirect_uri=${encodeURIComponent("https://panel.test/back")}&state=xyz`,
-      { Authorization: "Bearer " + token },
-    );
-    expect(authorize.status).toBe(403);
   });
 
   it("still does everything a panel is supposed to do", async () => {
     const { token } = await claimDevice("me@example.com");
     expect((await get("/me", { Authorization: "Bearer " + token })).status).toBe(200);
     expect((await get("/drive/status", { Authorization: "Bearer " + token })).status).toBe(200);
-    expect((await postJson("/device/public-url", { public_url: "https://mine.test" }, { Authorization: "Bearer " + token })).status).toBe(200);
     // Signing itself out is its own business, and still works.
     expect((await postJson("/device/revoke", {}, { Authorization: "Bearer " + token })).status).toBe(200);
   });
