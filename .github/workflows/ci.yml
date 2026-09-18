@@ -44,9 +44,22 @@ jobs:
             exit 1
           fi
 
-      # vitest-pool-workers deadlocks on startup: it hangs before any test
-      # runs, with no output. Locally that was 1 run in 6; on this runner it
-      # is worse, and a single attempt would make the job useless.
+      # This retry loop was written for what looked like a startup deadlock in
+      # vitest-pool-workers: a hang with no output at all. It was not that. The
+      # run was reaching the END of the suite, passing every test, and hanging
+      # in teardown on a panel socket that test/relay.test.ts had opened and
+      # nobody had waited for the Durable Object to let go of. The output was
+      # missing only because this step kills with SIGKILL, and a killed process
+      # loses whatever stdout is still sitting in its pipe buffer.
+      #
+      # Measured on one Mac, full suite, 10 runs each: 6/10 hung before the
+      # fix, 0/10 after (relay suite alone: 5/6 before, 0/12 after). The tests
+      # now close every socket through a helper that waits for the close.
+      #
+      # The loop stays as a net, not as the answer. If this starts retrying
+      # again, suspect a newly opened socket that nothing waits on rather than
+      # the pool, and reach for the same 10-run measurement before believing
+      # any fix.
       #
       # The cap is sized against a healthy run, not against patience. A whole
       # passing job takes about 30 seconds here, so 150s is already five times
