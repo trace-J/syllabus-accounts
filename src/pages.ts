@@ -127,7 +127,7 @@ export function accountPage(
   const rows = devices.length
     ? devices
         .map(
-          (d) => `<tr><td><strong>${h(d.name)}</strong><br><span class="muted">${h(d.profile)}, added ${when(d.created_at)}${d.public_url ? `, also at <a href="${h(d.public_url)}">${h(d.public_url.replace(/^https:\/\//, ""))}</a>` : ""}</span>${publicUrl ? relayLine(d, relays[d.id], publicUrl) : ""}</td>
+          (d) => `<tr><td><strong>${h(d.name)}</strong><br><span class="muted">${h(d.profile)}, added ${when(d.created_at)}</span>${publicUrl ? relayLine(d, relays[d.id], publicUrl) : ""}</td>
                   <td class="muted" style="white-space:nowrap">last seen ${when(d.last_seen_at)}</td>
                   <td><form method="post" action="/devices/${h(d.id)}/revoke"><button>Remove</button></form></td></tr>`,
         )

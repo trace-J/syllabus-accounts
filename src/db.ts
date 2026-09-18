@@ -69,16 +69,15 @@ export async function createDevice(
     account_id: accountId,
     name,
     profile,
-    public_url: "",
     created_at: ts,
     last_seen_at: ts,
     revoked_at: null,
   };
   await db
     .prepare(
-      "INSERT INTO devices (id, account_id, name, profile, public_url, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO devices (id, account_id, name, profile, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)",
     )
-    .bind(device.id, device.account_id, device.name, device.profile, device.public_url, device.created_at, device.last_seen_at)
+    .bind(device.id, device.account_id, device.name, device.profile, device.created_at, device.last_seen_at)
     .run();
   return device;
 }
@@ -138,7 +137,7 @@ export async function resolveDeviceToken(
   const row = await db
     .prepare(
       `SELECT d.id AS d_id, d.account_id AS d_account_id, d.name AS d_name, d.profile AS d_profile,
-              d.public_url AS d_public_url, d.created_at AS d_created_at, d.last_seen_at AS d_last_seen_at,
+              d.created_at AS d_created_at, d.last_seen_at AS d_last_seen_at,
               d.revoked_at AS d_revoked_at, a.*
          FROM device_tokens t
          JOIN devices d ON d.id = t.device_id
@@ -154,7 +153,6 @@ export async function resolveDeviceToken(
     account_id: row.d_account_id as string,
     name: row.d_name as string,
     profile: row.d_profile as string,
-    public_url: row.d_public_url as string,
     created_at: row.d_created_at as string,
     last_seen_at: row.d_last_seen_at as string,
     revoked_at: row.d_revoked_at,
@@ -259,55 +257,10 @@ export async function pendingDeviceCodes(db: D1Database): Promise<number> {
   return row?.total ?? 0;
 }
 
-// --- Devices' public addresses, and panel sign-in codes ----------------------
+// --- Devices -----------------------------------------------------------------
 
 export async function deviceById(db: D1Database, id: string): Promise<Device | null> {
   return db.prepare("SELECT * FROM devices WHERE id = ? AND revoked_at IS NULL").bind(id).first<Device>();
-}
-
-export async function setDevicePublicUrl(db: D1Database, deviceId: string, publicUrl: string): Promise<void> {
-  await db.prepare("UPDATE devices SET public_url = ? WHERE id = ?").bind(publicUrl, deviceId).run();
-}
-
-export type PanelCode = {
-  code_hash: string;
-  device_id: string;
-  account_id: string;
-  redirect_uri: string;
-  created_at: string;
-  expires_at: string;
-  used_at: string | null;
-};
-
-export async function insertPanelCode(
-  db: D1Database,
-  codeHash: string,
-  deviceId: string,
-  accountId: string,
-  redirectUri: string,
-  expiresAt: string,
-): Promise<void> {
-  await db
-    .prepare(
-      "INSERT INTO panel_codes (code_hash, device_id, account_id, redirect_uri, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
-    )
-    .bind(codeHash, deviceId, accountId, redirectUri, now(), expiresAt)
-    .run();
-}
-
-/** Redeem a panel code for `deviceId`, once. Null when it is not that device's live, unused code. */
-export async function redeemPanelCode(db: D1Database, codeHash: string, deviceId: string): Promise<PanelCode | null> {
-  const row = await db.prepare("SELECT * FROM panel_codes WHERE code_hash = ?").bind(codeHash).first<PanelCode>();
-  if (!row || row.device_id !== deviceId || row.used_at || row.expires_at < now()) return null;
-  const res = await db
-    .prepare("UPDATE panel_codes SET used_at = ? WHERE code_hash = ? AND used_at IS NULL")
-    .bind(now(), codeHash)
-    .run();
-  return res.meta.changes ? row : null;
-}
-
-export async function sweepPanelCodes(db: D1Database): Promise<void> {
-  await db.prepare("DELETE FROM panel_codes WHERE expires_at < ?").bind(now()).run();
 }
 
 // --- Settings documents ------------------------------------------------------

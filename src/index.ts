@@ -18,7 +18,6 @@ import { devices } from "./devices";
 import type { AppEnv } from "./env";
 import { google } from "./google";
 import { accountPage, landing, privacyPage, termsPage } from "./pages";
-import { panel } from "./panel";
 import { proxy } from "./proxy";
 import { panelUrl, relay, relayState } from "./relay";
 import { settings } from "./settings";
@@ -82,7 +81,6 @@ app.post("/device/revoke", async (c) => {
 
 app.route("/", google);
 app.route("/", devices);
-app.route("/", panel);
 app.route("/", relay);
 app.route("/", settings);
 app.route("/", drive);

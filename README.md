@@ -21,13 +21,9 @@ their Google Drive grant.
   panel's address and whether that panel is connected right now, and can remove one.
 - **Who am I.** `GET /me` answers a browser session or a device bearer with the
   account and, for a device, which Mac it is.
-- **Sign in to a panel over the web.** A panel published through a tunnel
-  sends a browser with no session to `/panel/authorize`; if the signed-in
-  account owns that panel's device, the browser goes back to the panel with a
-  one-time code, and the panel redeems it at `/panel/exchange` with its own
-  device token. Anyone else is told the panel is not theirs. A panel tells us
-  where it is published with `POST /device/public-url`, and a browser is only
-  ever sent back to that address.
+- **Reach a panel over the web.** `/p/<device>/` relays a signed-in
+  browser to that Mac's panel over a Durable Object socket, when the account
+  owns it. Anyone else is told the panel is not theirs.
 
 ## The device flow
 
@@ -70,21 +66,6 @@ account page, or `POST /device/revoke` from the panel itself, ends the token.
   says whether a grant exists, and `/drive/disconnect` revokes it at Google
   and forgets it. A grant Google stops honoring is marked revoked and the
   account page says so.
-
-## Signing in to a panel
-
-```
-browser -> panel (through its tunnel, no session)
-        <- 302 to /panel/authorize?device=&redirect_uri=&state=
-browser -> this Worker: signs in with Google if needed; the account must own the device
-        <- 302 to redirect_uri?code=&state=          (code lives five minutes, redeemed once)
-panel   -> POST /panel/exchange {code}  Authorization: Bearer syd_...
-        <- {account: {id, email, name}}
-panel sets its own session cookie for that person
-```
-
-The code alone is worthless: only the device it was minted for can redeem
-it, and `redirect_uri` has to sit on the address that device registered.
 
 ## The relay
 
@@ -209,9 +190,8 @@ at 192kbps and over three hours at 8kbps.
 ## What is stored
 
 `accounts` (Google sub, email, name), `devices` (one per claimed panel, with
-a profile, a name, and the address it is published at), `device_tokens`
-(hashes only), `device_codes` (claims in progress), and `panel_codes`
-(browser sign-ins on their way to a panel, hashes only), and `settings`
+a profile and a name), `device_tokens` (hashes only), `device_codes`
+(claims in progress), and `settings`
 (named documents per account and profile, the schedule first), and
 `drive_grants` (one encrypted refresh token per account, and which Google
 account granted it), and `usage` plus `allowances` (what the proxy spent and
@@ -219,7 +199,10 @@ what it may spend, as numbers). No recording, transcript, or API key ever
 comes here: audio and transcripts stream through the proxy to the provider
 and only the unit count is kept.
 
-## Later phases
+## What was retired
 
-Retiring the tunnel path: `/panel/authorize`, `/panel/exchange`, and each
-device's `public_url`, once every panel reaches the web through the relay.
+The panel sign-in that a Cloudflare Tunnel needed. `/panel/authorize`,
+`/panel/exchange` and `/device/public-url`, the `panel_codes` table, and
+each device's `public_url` went on 2026-09-17, once every panel reached the
+web through the relay instead. Migration `0008_retire_panel_signin.sql`
+takes the table and the column out of D1.

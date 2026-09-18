@@ -35,7 +35,6 @@ export type Device = {
   account_id: string;
   name: string;
   profile: string;
-  public_url: string;
   created_at: string;
   last_seen_at: string;
   revoked_at: string | null;
