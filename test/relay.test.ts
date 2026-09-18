@@ -27,7 +27,17 @@ async function connectPanel(token: string, answer: (req: ReqFrame) => Array<ResF
       if (replies) for (const reply of replies) ws.send(JSON.stringify(reply));
     });
   });
-  return { ws, seen, welcome: await welcome };
+  // Closing is not finished when close() returns: the socket belongs to the
+  // Durable Object, and workerd is not idle until the object has observed it
+  // going. A test that ends while the server side is still open leaves the
+  // pool waiting on a child that never exits, which is a hang with every
+  // test passing. Always close through this.
+  const closed = new Promise<void>((resolve) => ws.addEventListener("close", () => resolve()));
+  const close = async (code?: number, reason?: string) => {
+    ws.close(code, reason);
+    await closed;
+  };
+  return { ws, seen, welcome: await welcome, close };
 }
 
 const echo = (req: ReqFrame): ResFrame[] => [
@@ -68,11 +78,11 @@ describe("the panel's socket", () => {
 
   it("welcomes the panel with the limits it should honor", async () => {
     const mine = await claimDevice("me@example.com");
-    const { welcome, ws } = await connectPanel(mine.token, () => null);
+    const { welcome, close } = await connectPanel(mine.token, () => null);
     expect(welcome.device).toBe(mine.deviceId);
     expect(welcome.chunk_bytes).toBeGreaterThan(0);
     expect(welcome.max_response_bytes).toBeGreaterThan(welcome.chunk_bytes);
-    ws.close();
+    await close();
   });
 });
 
@@ -127,7 +137,7 @@ describe("a browser at /p/<device>/", () => {
 
   it("relays a request to the connected panel and its answer back, with the viewer named", async () => {
     const mine = await claimDevice("me@example.com", "My Mac");
-    const { seen, ws } = await connectPanel(mine.token, echo);
+    const { seen, close } = await connectPanel(mine.token, echo);
     const res = await get(`/p/${mine.deviceId}/api/status?since=1`, { Cookie: mine.cookie, Accept: "application/json", "X-Forwarded-For": "1.2.3.4" });
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("application/json");
@@ -142,12 +152,12 @@ describe("a browser at /p/<device>/", () => {
     expect(body.headers).toEqual({ accept: "application/json" });
     expect(seen).toHaveLength(1);
     expect(seen[0].headers.cookie).toBeUndefined();
-    ws.close();
+    await close();
   });
 
   it("relays a POST body from the owner, and refuses one from another site", async () => {
     const mine = await claimDevice("me@example.com");
-    const { ws } = await connectPanel(mine.token, echo);
+    const { close } = await connectPanel(mine.token, echo);
     const res = await postJson(`/p/${mine.deviceId}/api/record/start`, { course: "ACCT-4321" }, { Cookie: mine.cookie, Origin: ORIGIN });
     expect(res.status).toBe(200);
     expect(((await res.json()) as { body: string }).body).toBe(JSON.stringify({ course: "ACCT-4321" }));
@@ -155,12 +165,12 @@ describe("a browser at /p/<device>/", () => {
     expect(cross.status).toBe(403);
     const big = await postJson(`/p/${mine.deviceId}/api/setup`, { pad: "x".repeat(70 * 1024) }, { Cookie: mine.cookie, Origin: ORIGIN });
     expect(big.status).toBe(413);
-    ws.close();
+    await close();
   });
 
   it("reassembles a chunked answer", async () => {
     const mine = await claimDevice("me@example.com");
-    const { ws } = await connectPanel(mine.token, (req) => [
+    const { close } = await connectPanel(mine.token, (req) => [
       { t: "res", id: req.id, status: 200, headers: { "Content-Type": "text/html" }, body: text("<html>part one, "), more: true },
       { t: "chunk", id: req.id, body: text("part two, "), more: true },
       { t: "chunk", id: req.id, body: text("done</html>") },
@@ -168,23 +178,23 @@ describe("a browser at /p/<device>/", () => {
     const res = await get(`/p/${mine.deviceId}/`, { Cookie: mine.cookie });
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("<html>part one, part two, done</html>");
-    ws.close();
+    await close();
   });
 
   it("passes a 304 for an image through with no body", async () => {
     const mine = await claimDevice("me@example.com");
-    const { ws } = await connectPanel(mine.token, (req) => [{ t: "res", id: req.id, status: 304, headers: { ETag: '"abc"' } }]);
+    const { close } = await connectPanel(mine.token, (req) => [{ t: "res", id: req.id, status: 304, headers: { ETag: '"abc"' } }]);
     const res = await get(`/p/${mine.deviceId}/static/icon.png`, { Cookie: mine.cookie, "If-None-Match": '"abc"' });
     expect(res.status).toBe(304);
     expect(res.headers.get("ETag")).toBe('"abc"');
-    ws.close();
+    await close();
   });
 
   it("is not connected again once the panel's socket closes, remembering when", async () => {
     const mine = await claimDevice("me@example.com", "My Mac");
-    const { ws } = await connectPanel(mine.token, echo);
+    const { close } = await connectPanel(mine.token, echo);
     expect((await get(`/p/${mine.deviceId}/api/status`, { Cookie: mine.cookie })).status).toBe(200);
-    ws.close(1000, "panel stopping");
+    await close(1000, "panel stopping");
     let res = await get(`/p/${mine.deviceId}/`, { Cookie: mine.cookie });
     for (let i = 0; i < 20 && res.status !== 503; i++) {
       await new Promise((r) => setTimeout(r, 25));
@@ -201,10 +211,10 @@ describe("a browser at /p/<device>/", () => {
     let html = await (await get("/", { Cookie: mine.cookie })).text();
     expect(html).toContain(`/p/${mine.deviceId}/`);
     expect(html).toContain("has not connected yet");
-    const { ws } = await connectPanel(mine.token, echo);
+    const { close } = await connectPanel(mine.token, echo);
     html = await (await get("/", { Cookie: mine.cookie })).text();
     expect(html).toContain("Connected now");
-    ws.close(1000, "bye");
+    await close(1000, "bye");
     for (let i = 0; i < 20 && html.includes("Connected now"); i++) {
       await new Promise((r) => setTimeout(r, 25));
       html = await (await get("/", { Cookie: mine.cookie })).text();
@@ -220,6 +230,7 @@ describe("a browser at /p/<device>/", () => {
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("second");
     expect(first.seen).toHaveLength(0);
-    second.ws.close();
+    // Both, not just the newest: the replaced socket is still workerd's to close.
+    await Promise.all([first.close(), second.close()]);
   });
 });
