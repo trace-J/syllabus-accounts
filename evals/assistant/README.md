@@ -8,30 +8,36 @@ questions against real lectures rather than by arithmetic.
 
 ## What ran, 2026-09-19
 
-Sonnet 5 at effort medium, the Worker's own prompt, 36 graded questions,
-scored by Claude Opus 4.8 against a five-part rubric with the same lectures
-in front of it.
+Sonnet 5 at effort medium, the Worker's own prompt, all 43 questions, scored
+by Claude Opus 4.8 against a five-part rubric with the same lectures in front
+of it.
 
 | Path | Cases | Acceptable | Rubric | Cost a question |
 |---|---:|---:|---:|---:|
-| Course summaries | 32 | **96.9%** | 99.4% | $0.085 |
-| One course's transcripts | 4 | **50.0%** | 85.0% | $0.459 |
+| Course summaries | 36 | **97.2%** | 98.9% | $0.098 |
+| One course's transcripts | 7 | **71.4%** | 91.4% | $0.487 |
+| — of those, study guides | 3 | 100% | 100% | $0.525 |
+| — of those, verbatim and arithmetic | 4 | **50.0%** | 85.0% | $0.459 |
+| Everything | 43 | **93.0%** | 97.7% | $0.162 |
+
+Routing was right on 97.6% of the 41 labeled cases: one question that wanted
+a transcript was answered from the summaries instead.
 
 **The split is the finding.** On summaries, which is what most of a study
-session is, Sonnet is as good as this rubric can measure. On full transcripts
-both failures are the same fault and it is the dangerous one: it invented
-numbers the transcript does not contain, with no change in how confident it
-sounded. Both were the accounting course, where answering means reconciling
-figures across 55k tokens; the narrative transcript questions (a story in
-ENTR-3306, a story in ENTR-4306) came back faithful.
+session is, Sonnet is as good as this rubric can measure, and it writes a
+clean study guide from a whole course. The failures are all in one place:
+four questions that turn on the instructor's exact figures, two of which came
+back with numbers the transcript does not contain, asserted in the tone of
+the answers that were right. Both were the accounting course, where answering
+means reconciling figures across 55k tokens. The narrative transcript
+questions came back faithful.
 
-Four cases are parked in `results.misgraded.jsonl` rather than counted: three
-multi-turn conversations the harness graded against the wrong question, and
-the quiz, which the grader marked down for asking one question and waiting,
-which is exactly what the mode instruction tells it to do. Both faults were
-this runner's, both are fixed, and neither says anything about the model. The
-three study guides never ran: they open a whole course each and the account
-ran out of credit.
+Three of these cases were scored as failures on the first pass and are not:
+the harness showed the grader a multi-turn conversation's last answer beside
+its FIRST question, so a follow-up answer was marked nonresponsive for
+answering the follow-up, and the quiz was marked down for asking one question
+and waiting, which is what the mode instruction tells it to do. Both faults
+were the runner's. Both are fixed, and all four cases pass on the re-run.
 
 **What this does NOT measure.** The escalation rate. The `course` label on
 these questions is a judgment about these questions, not a claim about how
@@ -76,9 +82,43 @@ the diff, then pass `--approve-harness` once.
 Results land in `.claude/hillclimb/assistant/<variant>/`, which is gitignored
 for the same reason the material is: the traces are full of lecture content.
 
+## The index probe
+
+Whether a third stage would work, measured rather than argued, in
+`index_probe.py`.
+
+An index entry built out of what the summarizer already writes — the
+lecture's section headings, its key terms, its assignments, and the proper
+nouns in its body — is **372 tokens a lecture, measured**. At a full
+semester's 112 lectures that is a 42k index against 307k of summaries.
+
+Asked to route on the index alone, with tools to open notes, open transcripts,
+answer from the index, or say it is not covered, Sonnet got 13 of 17 to the
+right tool and 10 of 17 to the right tool AND the right lectures. Not
+shippable, and all three causes are known:
+
+1. **Two lectures shared an id.** `COURSE_DATE` is not unique: this student
+   recorded ACCT-4321 twice on 2026-09-01. The model invented a
+   disambiguated id rather than picking wrongly, which is the good failure,
+   but it is still a miss. The id needs the topic slug in it.
+2. **Anecdotes are not in the index and cannot be found in it.** Grep the
+   index for "AT&T" or "wiper" and there are no hits, because a story told
+   once in a lecture is not a key term and is not a section heading. Both
+   anecdote questions misrouted, one of them to the wrong course. This is
+   what the summarizer would have to start emitting: a `mentions` field, the
+   named examples and stories, alongside `key_terms`.
+3. **An index is a table of contents and the model will try to answer from
+   it.** Tightening the prompt away from over-reading transcripts pushed it
+   into under-reading: three concept questions came back
+   `answer_from_index`, which would have answered a question about
+   Schumpeter from a list of twelve term names.
+
+None of that says the design is wrong. It says the retrieval step is its own
+piece of work with its own eval, and that the index has to be built by the
+summarizer rather than scraped out of prose afterwards.
+
 ## What is still open
 
-- Re-run the four parked cases and the three study guides. About $2.
 - The transcript path needs more than four cases before anyone concludes
   anything from 50%. The cheap version is six more accounting questions that
   turn on figures, since that is where both failures were.
@@ -86,3 +126,5 @@ for the same reason the material is: the traces are full of lecture content.
   quote figures rather than recompute or reconcile them, not a more expensive
   model. Opus does not fit in a $22 plan at any quality, so a model that gets
   arithmetic right is not an option that is actually on the table.
+- A routing eval, if the third stage is built: the questions here grade an
+  answer, and routing needs its own labeled set.
