@@ -51,8 +51,36 @@ import { profileSpec, userMessage } from "./prompts";
 
 // --- What is fixed here, and not by a caller --------------------------------
 
-const TRANSCRIBE_URL = "https://api.openai.com/v1/audio/transcriptions";
-const TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe";
+/**
+ * Transcription runs on Groq when there is a key for it, and on OpenAI when
+ * there is not or when Groq will not answer.
+ *
+ * Why two: transcription is the whole of the audio cost (about $0.18 of the
+ * $0.21 an hour of lecture costs on OpenAI), and Groq serves the same job at
+ * $0.111 an hour for whisper-large-v3. That is the single biggest line on the
+ * bill and the cheapest one to move, because nothing about the request shape
+ * changes: Groq speaks the OpenAI transcription API.
+ *
+ * Why OpenAI stays: this service spends ONE key for every account, so a
+ * provider rate limit is a ceiling on the whole product rather than on one
+ * user. Groq's free tier allows 7,200 audio seconds an hour across everyone,
+ * which 25 students can exhaust between them. Falling back means a Groq limit
+ * costs money instead of costing transcriptions.
+ *
+ * The fallback is deliberately taken on ANY Groq failure, not just 429. A
+ * wrong or expired Groq key should make lectures expensive, never broken. The
+ * status is logged every time so "expensive" does not go unnoticed.
+ *
+ * Turbo (whisper-large-v3-turbo) is $0.04 an hour, 2.8x cheaper again, at 12%
+ * WER against large-v3's 10.3% on Groq's own figures. It is one constant away
+ * and it is not taken yet: the provider benchmark on a real lecture is what
+ * decides whether that accuracy is affordable, not this file.
+ */
+const GROQ_TRANSCRIBE_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
+const GROQ_TRANSCRIBE_MODEL = "whisper-large-v3";
+
+const OPENAI_TRANSCRIBE_URL = "https://api.openai.com/v1/audio/transcriptions";
+const OPENAI_TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe";
 
 const MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -245,6 +273,56 @@ function label(raw: unknown): string {
  * chunk's tail makes these models re-transcribe it (see _transcribe_chunk in
  * intake/transcribe.py).
  */
+/**
+ * One audio chunk to whichever transcription provider will take it.
+ *
+ * Groq first when a key exists, OpenAI second. The form is rebuilt for each
+ * attempt rather than reused: a FormData that has been sent has had its blob
+ * consumed, and a silently empty retry body is worse than a second object.
+ *
+ * Only these three fields ever reach a provider. Neither the caller's own
+ * field names nor a prompt is forwarded, on either leg.
+ */
+async function transcribeUpstream(
+  c: Context<AppEnv>,
+  bytes: Uint8Array,
+  audio: File,
+): Promise<{ ok: true; text: string } | { ok: false; what: string; status: number }> {
+  const legs: { what: string; url: string; model: string; key: string | undefined }[] = [
+    { what: "groq transcription", url: GROQ_TRANSCRIBE_URL, model: GROQ_TRANSCRIBE_MODEL, key: c.env.GROQ_API_KEY },
+    { what: "openai transcription", url: OPENAI_TRANSCRIBE_URL, model: OPENAI_TRANSCRIBE_MODEL, key: c.env.OPENAI_API_KEY },
+  ];
+
+  let last = { what: "transcription", status: 0 };
+  for (const leg of legs) {
+    // No key for this leg is not a failure, it is a leg that does not exist.
+    // An unset GROQ_API_KEY is how this service runs on OpenAI alone.
+    if (!leg.key) continue;
+
+    const upstream = new FormData();
+    upstream.set("file", new Blob([bytes], { type: audio.type || "audio/mp4" }), audio.name || "chunk.m4a");
+    upstream.set("model", leg.model);
+    upstream.set("response_format", "text");
+
+    let res: Response;
+    try {
+      res = await fetch(leg.url, { method: "POST", headers: { Authorization: `Bearer ${leg.key}` }, body: upstream });
+    } catch {
+      console.log(`proxy: ${leg.what} could not be reached`);
+      last = { what: leg.what, status: 0 };
+      continue;
+    }
+    if (res.ok) return { ok: true, text: await res.text() };
+
+    // Logged on every fall-through, because falling through to OpenAI costs
+    // real money and a Groq key that has quietly stopped working should show
+    // up here rather than on a card statement.
+    console.log(`proxy: ${leg.what} answered ${res.status}`);
+    last = { what: leg.what, status: res.status };
+  }
+  return { ok: false, ...last };
+}
+
 proxy.post("/proxy/transcribe", async (c) => {
   const account = c.get("account");
   const device = c.get("device");
@@ -309,29 +387,13 @@ proxy.post("/proxy/transcribe", async (c) => {
     return refuse(c, overAllowance("transcribe", used, seconds, allowed.audio_seconds));
   }
 
-  // Rebuilt rather than forwarded, so only these three fields reach OpenAI.
-  const upstream = new FormData();
-  upstream.set("file", new Blob([bytes], { type: audio.type || "audio/mp4" }), audio.name || "chunk.m4a");
-  upstream.set("model", TRANSCRIBE_MODEL);
-  upstream.set("response_format", "text");
-
-  let res: Response;
-  try {
-    res = await fetch(TRANSCRIBE_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${c.env.OPENAI_API_KEY}` },
-      body: upstream,
-    });
-  } catch {
+  const attempt = await transcribeUpstream(c, bytes, audio);
+  if (!attempt.ok) {
     await db.releaseUsage(c.env.DB, held.id);
-    return refuse(c, providerFailed("openai transcription", 0));
-  }
-  if (!res.ok) {
-    await db.releaseUsage(c.env.DB, held.id);
-    return refuse(c, providerFailed("openai transcription", res.status));
+    return refuse(c, providerFailed(attempt.what, attempt.status));
   }
 
-  const text = (await res.text()).trim();
+  const text = attempt.text.trim();
   // Audio seconds are known before the call, so settling confirms the
   // reservation rather than correcting it. It still has to happen: a
   // reservation nobody settles is swept back to the account in the end.
