@@ -157,9 +157,11 @@ two paid calls are made from this service instead:
                              -> { text, audio_seconds }
     POST /proxy/summarize    { transcript, course, date }
                              -> { summary, tokens }
+    POST /proxy/assist       { session, scope, course, mode, documents, messages }
+                             -> { reply, escalate, units, usage, session }
     GET  /proxy/usage        what is left this month
 
-Both paid endpoints take a device bearer, never a browser session.
+Every paid endpoint takes a device bearer, never a browser session.
 
 Transcription runs on Groq (`whisper-large-v3`) and falls back to OpenAI
 (`gpt-4o-mini-transcribe`). Transcription is nearly the whole cost of an hour
@@ -172,6 +174,51 @@ and every fall-through is logged, because a Groq key that has quietly stopped
 working should show up in the logs and not on a card statement. `GROQ_API_KEY`
 is optional: with it unset every transcription goes to OpenAI, exactly as
 before.
+
+### The study assistant
+
+`POST /proxy/assist` answers a question about the student's own lectures, on
+Claude Sonnet 5. The model choice is the whole of the Pro price: 15 sessions a
+month cost $9.90 on Opus 5 and $3.96 on Sonnet 5, and that $5.94 is what makes
+Pro at $22 net $10.31 rather than $4.37. It was taken on an eval over real
+course material, not on the arithmetic alone; `evals/assistant` holds the
+questions, the graders and the measured cost per question.
+
+**Two-stage context.** A session normally carries course summaries only, about
+15k tokens, and most questions are answered from them. When a question needs
+the instructor's actual words, the model calls `open_course` for ONE course;
+the endpoint then answers nothing and replies `{ escalate: { course } }`, and
+the panel asks again with `scope: "course"` and that course's transcripts,
+about 240k tokens. A study guide escalates without asking, because it has
+always needed the full course.
+
+**The escalation rate is measured from the first session.** Every margin
+figure assumes 15% of sessions escalate and nobody has ever measured it; at
+50% the Sonnet month is $8.82 rather than $3.96 and Pro at $22 stops working.
+An account sees its own count on `GET /proxy/usage`. Across every account:
+
+    npm run escalation
+
+**Caching.** The material is one text block behind a 5-minute cache
+breakpoint, with a second breakpoint on the end of the latest turn, so a
+session's transcripts are written once and read by every follow-up at a tenth
+of the price. The 5-minute TTL is deliberate: a read refreshes it and a study
+session is continuous, so the 1-hour TTL would double the write premium to buy
+nothing. Nothing volatile is ever appended to the latest turn alone, because
+it would be missing from that turn once it is history and would move the
+prefix under the cache; the date rides with the material and the mode goes on
+every student turn. Every call logs `read=` from
+`usage.cache_read_input_tokens`, and a zero there across the turns of one
+session means the prefix is varying and the session is being paid for at full
+price.
+
+**What it costs.** Assist is metered in `assist_units`: input-token
+equivalents at the Sonnet input rate, $2 per million of them, with a cache
+write at 1.25, a cache read at 0.1 and an output token at 5. Metering raw
+tokens would charge a cached read like a fresh one and overstate a warm
+session by nearly ten times, which would refuse Pro accounts doing exactly
+what Pro is sold for. A session is also capped in number, because a session is
+the most expensive thing a stolen device token could buy.
 
 Every settled usage row records which provider served it, so the split can be
 read back rather than caught live in the logs. An account sees its own on

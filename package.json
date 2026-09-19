@@ -9,6 +9,7 @@
     "deploy": "wrangler deploy",
     "test": "vitest run",
     "typecheck": "wrangler types && tsc --noEmit",
+    "escalation": "wrangler d1 execute syllabus-accounts --remote --command \"SELECT period, COUNT(*) AS sessions, SUM(escalated) AS escalated, ROUND(100.0 * SUM(escalated) / COUNT(*), 1) AS pct_escalated, SUM(turns) AS turns FROM assist_sessions GROUP BY period ORDER BY period DESC\"",
     "split": "wrangler d1 execute syllabus-accounts --remote --command \"SELECT period, provider, COUNT(*) AS calls, SUM(units) AS seconds, ROUND(SUM(units)/3600.0, 2) AS hours FROM usage WHERE kind = 'transcribe' AND state = 'final' GROUP BY period, provider ORDER BY period DESC, seconds DESC\"",
     "db:migrate": "wrangler d1 migrations apply syllabus-accounts --local",
     "db:migrate:remote": "wrangler d1 migrations apply syllabus-accounts --remote",

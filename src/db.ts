@@ -358,12 +358,23 @@ export async function deleteDriveGrant(db: D1Database, accountId: string): Promi
 
 // --- Proxy usage, allowances, and rate limiting ------------------------------
 
-export type UsageKind = "transcribe" | "summarize";
+/**
+ * What a paid call is metered in. Three meters, three units.
+ *
+ * `transcribe` counts audio seconds, `summarize` counts tokens, and `assist`
+ * counts assist units: input-token equivalents at the Sonnet input rate, so
+ * that one number stands for money whether the tokens were read from cache,
+ * written to it, or generated. proxy.ts owns the weights.
+ */
+export type UsageKind = "transcribe" | "summarize" | "assist";
 
 export type Allowance = {
   account_id: string;
   audio_seconds: number;
   summary_tokens: number;
+  /** Null on an account from before the assistant: proxy.ts substitutes the trial figure. */
+  assist_units: number | null;
+  assist_sessions: number | null;
   source: string;
   updated_at: string;
 };
@@ -384,14 +395,18 @@ export async function putAllowance(
   audioSeconds: number,
   summaryTokens: number,
   source: string,
+  assistUnits: number | null = null,
+  assistSessions: number | null = null,
 ): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO allowances (account_id, audio_seconds, summary_tokens, source, updated_at) VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO allowances (account_id, audio_seconds, summary_tokens, assist_units, assist_sessions, source, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (account_id) DO UPDATE SET audio_seconds = excluded.audio_seconds,
-         summary_tokens = excluded.summary_tokens, source = excluded.source, updated_at = excluded.updated_at`,
+         summary_tokens = excluded.summary_tokens, assist_units = excluded.assist_units,
+         assist_sessions = excluded.assist_sessions, source = excluded.source, updated_at = excluded.updated_at`,
     )
-    .bind(accountId, audioSeconds, summaryTokens, source, now())
+    .bind(accountId, audioSeconds, summaryTokens, assistUnits, assistSessions, source, now())
     .run();
 }
 
@@ -590,4 +605,106 @@ export async function hitRateLimit(
 /** Windows that have closed are of no further use; clear them opportunistically. */
 export async function sweepRateLimits(db: D1Database, before: number): Promise<void> {
   await db.prepare("DELETE FROM rate_limits WHERE window_start < ?").bind(before).run();
+}
+
+// --- The study assistant's sessions ----------------------------------------
+
+export type AssistSession = {
+  account_id: string;
+  session_id: string;
+  device_id: string;
+  period: string;
+  escalated: number;
+  course: string;
+  turns: number;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * Count one turn against a study session, opening it if it is new.
+ *
+ * A session is the unit the cap is written in, so this is where the cap is
+ * enforced, and the check and the write are one statement for the same
+ * reason reserveUsage's are: two panels starting a session at the same
+ * moment must see each other, and a count followed by an insert lets both
+ * through.
+ *
+ * The WHERE admits a turn when either the account is under its cap OR this
+ * session already exists. Without the second leg, reaching the cap would
+ * refuse the next turn of a conversation already in progress, which is a
+ * worse experience than refusing to start one and costs the same money.
+ *
+ * A session opened last month and continued into this one keeps counting
+ * against the month it was opened in. That is deliberate: it is one session
+ * and one cache, and splitting it would count it twice.
+ *
+ * Returns the row as it now stands, or null when the cap refuses it.
+ */
+export async function openAssistSession(
+  db: D1Database,
+  accountId: string,
+  sessionId: string,
+  deviceId: string,
+  cap: number,
+): Promise<AssistSession | null> {
+  const period = usagePeriod();
+  const at = now();
+  return db
+    .prepare(
+      `INSERT INTO assist_sessions (account_id, session_id, device_id, period, turns, created_at, updated_at)
+       SELECT ?, ?, ?, ?, 1, ?, ?
+        WHERE (SELECT COUNT(*) FROM assist_sessions WHERE account_id = ? AND period = ?) < ?
+           OR EXISTS (SELECT 1 FROM assist_sessions WHERE account_id = ? AND session_id = ?)
+       ON CONFLICT (account_id, session_id)
+       DO UPDATE SET turns = turns + 1, updated_at = excluded.updated_at
+       RETURNING *`,
+    )
+    .bind(accountId, sessionId, deviceId, period, at, at, accountId, period, cap, accountId, sessionId)
+    .first<AssistSession>();
+}
+
+/**
+ * This session needed one course's full transcripts. Say so, once.
+ *
+ * The flag only ever goes up. A session that escalates on its third question
+ * spends the full-course price for the rest of its life, so for the purposes
+ * of the escalation rate it escalated, and a later summaries-only turn does
+ * not take that back.
+ */
+export async function markAssistEscalated(
+  db: D1Database,
+  accountId: string,
+  sessionId: string,
+  course: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE assist_sessions SET escalated = 1, course = CASE WHEN course = '' THEN ? ELSE course END,
+              updated_at = ?
+        WHERE account_id = ? AND session_id = ?`,
+    )
+    .bind(course, now(), accountId, sessionId)
+    .run();
+}
+
+/**
+ * Sessions this account started this period, and how many of them escalated.
+ *
+ * The first number is the cap. The second is the one the tier table moves
+ * with: HOME-STRETCH.md models 15% and has never measured it.
+ */
+export async function assistSessionsThisPeriod(
+  db: D1Database,
+  accountId: string,
+  period = usagePeriod(),
+): Promise<{ started: number; escalated: number }> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS started, COALESCE(SUM(escalated), 0) AS escalated
+         FROM assist_sessions WHERE account_id = ? AND period = ?`,
+    )
+    .bind(accountId, period)
+    .first<{ started: number; escalated: number }>();
+  return { started: row?.started ?? 0, escalated: row?.escalated ?? 0 };
 }
