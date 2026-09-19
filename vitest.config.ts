@@ -20,6 +20,7 @@ export default defineConfig(async () => {
             SESSION_SECRET: "test-session-secret-long-enough-to-sign-with",
             DRIVE_KEY: "test-drive-key",
             OPENAI_API_KEY: "sk-test-openai",
+            GROQ_API_KEY: "gsk-test-groq",
             ANTHROPIC_API_KEY: "sk-ant-test",
           },
         },

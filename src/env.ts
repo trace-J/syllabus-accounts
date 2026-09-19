@@ -12,8 +12,17 @@ export type Bindings = {
   SESSION_SECRET: string;
   /** Secret: encrypts stored Drive refresh tokens. `wrangler secret put DRIVE_KEY`. */
   DRIVE_KEY: string;
-  /** Secret: the transcription key the proxy spends. `wrangler secret put OPENAI_API_KEY`. */
+  /**
+   * Secret: the transcription key the proxy spends when Groq is unavailable
+   * or unset. `wrangler secret put OPENAI_API_KEY`.
+   */
   OPENAI_API_KEY: string;
+  /**
+   * Secret, OPTIONAL: the cheaper transcription key the proxy prefers.
+   * `wrangler secret put GROQ_API_KEY`. Unset means every transcription goes
+   * to OpenAI, which is what this service did before Groq.
+   */
+  GROQ_API_KEY?: string;
   /** Secret: the summary key the proxy spends. `wrangler secret put ANTHROPIC_API_KEY`. */
   ANTHROPIC_API_KEY: string;
 };

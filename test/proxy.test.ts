@@ -155,10 +155,11 @@ describe("transcription", () => {
     expect(JSON.stringify(body)).not.toContain(env.OPENAI_API_KEY);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe("https://api.openai.com/v1/audio/transcriptions");
+    // Groq, because there is a key for it. OpenAI is the fallback, below.
+    expect(calls[0].url).toBe("https://api.groq.com/openai/v1/audio/transcriptions");
     const sent = calls[0].init.body as FormData;
     // The model and the shape are ours, not the caller's, and no prompt is sent.
-    expect(sent.get("model")).toBe("gpt-4o-mini-transcribe");
+    expect(sent.get("model")).toBe("whisper-large-v3");
     expect(sent.get("response_format")).toBe("text");
     expect(sent.get("prompt")).toBeNull();
 
@@ -519,6 +520,118 @@ describe("two calls at once cannot both spend the last of the allowance", () => 
     expect(calls).toHaveLength(1);
     // Settled to what the provider reported, not left at the estimate.
     expect(await db.usedThisPeriod(env.DB, account.id, "summarize")).toBe(9500);
+  });
+});
+
+describe("which transcription provider gets the audio", () => {
+  const GROQ = "https://api.groq.com/openai/v1/audio/transcriptions";
+  const OPENAI = "https://api.openai.com/v1/audio/transcriptions";
+
+  /** Answers per host, so a test can fail one provider and not the other. */
+  function byHost(answers: { groq?: () => Response; openai?: () => Response }) {
+    return upstream((url) => {
+      if (url === GROQ) return (answers.groq ?? (() => new Response("no groq leg", { status: 500 })))();
+      return (answers.openai ?? (() => new Response("no openai leg", { status: 500 })))();
+    });
+  }
+
+  it("prefers Groq, and never touches OpenAI when Groq answers", async () => {
+    const calls = byHost({ groq: () => new Response("from groq", { status: 200 }) });
+    const { account, token } = await claimDevice("groq-first@example.com");
+
+    const res = await postAudio(m4aForm(480, 480), bearer(token));
+    expect(res.status).toBe(200);
+    expect((await res.json() as { text: string }).text).toBe("from groq");
+    expect(calls.map((c) => c.url)).toEqual([GROQ]);
+    expect(await db.usedThisPeriod(env.DB, account.id, "transcribe")).toBe(480);
+  });
+
+  it("falls back to OpenAI when Groq is rate limited, and bills the audio once", async () => {
+    const calls = byHost({
+      groq: () => new Response("rate limit exceeded", { status: 429 }),
+      openai: () => new Response("from openai", { status: 200 }),
+    });
+    const { account, token } = await claimDevice("groq-busy@example.com");
+
+    const res = await postAudio(m4aForm(480, 480), bearer(token));
+    // A Groq ceiling costs money, not transcriptions: the caller sees a 200.
+    expect(res.status).toBe(200);
+    expect((await res.json() as { text: string }).text).toBe("from openai");
+    expect(calls.map((c) => c.url)).toEqual([GROQ, OPENAI]);
+    // Metering is in audio seconds, so which provider served it changes nothing.
+    expect(await db.usedThisPeriod(env.DB, account.id, "transcribe")).toBe(480);
+  });
+
+  it("falls back on a bad Groq key rather than failing the lecture", async () => {
+    const calls = byHost({
+      groq: () => new Response(JSON.stringify({ error: { message: "Invalid API Key" } }), { status: 401 }),
+      openai: () => new Response("from openai", { status: 200 }),
+    });
+    const { token } = await claimDevice("groq-badkey@example.com");
+
+    const res = await postAudio(m4aForm(480, 480), bearer(token));
+    expect(res.status).toBe(200);
+    expect(calls.map((c) => c.url)).toEqual([GROQ, OPENAI]);
+  });
+
+  it("falls back when Groq cannot be reached at all", async () => {
+    const calls = upstream((url) => {
+      if (url === GROQ) throw new TypeError("network is unreachable");
+      return new Response("from openai", { status: 200 });
+    });
+    const { token } = await claimDevice("groq-down@example.com");
+
+    expect((await postAudio(m4aForm(480, 480), bearer(token))).status).toBe(200);
+    expect(calls.map((c) => c.url)).toEqual([GROQ, OPENAI]);
+  });
+
+  it("sends a fresh body on the second leg, not a spent one", async () => {
+    const calls = byHost({
+      groq: () => new Response("busy", { status: 429 }),
+      openai: () => new Response("from openai", { status: 200 }),
+    });
+    const { token } = await claimDevice("groq-retry-body@example.com");
+    await postAudio(m4aForm(480, 480), bearer(token));
+
+    // The fallback leg has to carry the audio, or OpenAI transcribes nothing.
+    const sent = calls[1].init.body as FormData;
+    const file = sent.get("file") as File;
+    expect(file).toBeInstanceOf(File);
+    expect(file.size).toBeGreaterThan(0);
+    expect(sent.get("model")).toBe("gpt-4o-mini-transcribe");
+    expect(sent.get("prompt")).toBeNull();
+  });
+
+  it("reports the last provider's failure, and keeps both keys out of it", async () => {
+    byHost({
+      groq: () => new Response("gsk-test-groq is invalid", { status: 500 }),
+      openai: () => new Response("sk-test-openai is invalid", { status: 503 }),
+    });
+    const { account, token } = await claimDevice("both-down@example.com");
+
+    const res = await postAudio(m4aForm(480, 480), bearer(token));
+    expect(res.status).toBe(502);
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({ error: "provider_unavailable" });
+    expect(text).not.toContain(env.GROQ_API_KEY);
+    expect(text).not.toContain(env.OPENAI_API_KEY);
+    // Nothing was transcribed, so nothing is billed.
+    expect(await db.usedThisPeriod(env.DB, account.id, "transcribe")).toBe(0);
+  });
+
+  it("goes straight to OpenAI when there is no Groq key", async () => {
+    const saved = env.GROQ_API_KEY;
+    // How this service runs before the secret is set: OpenAI alone, as before.
+    (env as { GROQ_API_KEY?: string }).GROQ_API_KEY = undefined;
+    try {
+      const calls = byHost({ openai: () => new Response("from openai", { status: 200 }) });
+      const { token } = await claimDevice("no-groq-key@example.com");
+
+      expect((await postAudio(m4aForm(480, 480), bearer(token))).status).toBe(200);
+      expect(calls.map((c) => c.url)).toEqual([OPENAI]);
+    } finally {
+      (env as { GROQ_API_KEY?: string }).GROQ_API_KEY = saved;
+    }
   });
 });
 

@@ -161,6 +161,18 @@ two paid calls are made from this service instead:
 
 Both paid endpoints take a device bearer, never a browser session.
 
+Transcription runs on Groq (`whisper-large-v3`) and falls back to OpenAI
+(`gpt-4o-mini-transcribe`). Transcription is nearly the whole cost of an hour
+of lecture, and Groq serves the same job for $0.111 an hour against OpenAI's
+$0.18, speaking the same API. OpenAI stays because this service spends one
+key for everybody, so a provider rate limit would otherwise be a ceiling on
+the whole product; falling back means hitting one costs money rather than
+costing transcriptions. Any Groq failure takes the fallback, not just a 429,
+and every fall-through is logged, because a Groq key that has quietly stopped
+working should show up in the logs and not on a card statement. `GROQ_API_KEY`
+is optional: with it unset every transcription goes to OpenAI, exactly as
+before.
+
 This is not a general-purpose API gateway, and the difference matters because
 the keys being spent are ours. The model, the upstream URL, the request
 shape, the system prompt and the response schema are all fixed in `proxy.ts`
