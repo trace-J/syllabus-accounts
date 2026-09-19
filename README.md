@@ -180,10 +180,25 @@ operator's question and deliberately not an endpoint:
 
     npm run split
 
-That goes straight at D1 and groups transcription seconds by period and
-provider. A month that looks cheap in a forecast and expensive on the card is
-a month where the `openai` row is larger than you thought. `unrecorded` is a
-call from before this column existed, not a third provider.
+      2026-10
+      provider        calls    hours   share   est. cost
+      --------------------------------------------------
+      groq               90     9.00     90%       $1.00
+      openai             10     1.00     10%       $0.18
+      --------------------------------------------------
+      total             100    10.00               $1.18
+
+      Effective: $0.12/audio hour (all-Groq would be $0.11, all-OpenAI $0.18)
+
+That groups by period and provider and prices each leg at its published rate.
+The last line is the one to read: a month that looks cheap in a forecast and
+expensive on the card is a month whose effective rate drifted toward $0.18.
+The dollars are an estimate from list prices, not a bill.
+
+`unrecorded` is a call from before the provider column existed, not a third
+provider, and it is deliberately not priced: guessing a rate for those rows
+would invent the number the table exists to stop guessing at. A period holding
+any of them totals with `>=`.
 
 This is not a general-purpose API gateway, and the difference matters because
 the keys being spent are ours. The model, the upstream URL, the request
