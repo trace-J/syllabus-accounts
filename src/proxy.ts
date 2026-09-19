@@ -287,10 +287,10 @@ async function transcribeUpstream(
   c: Context<AppEnv>,
   bytes: Uint8Array,
   audio: File,
-): Promise<{ ok: true; text: string } | { ok: false; what: string; status: number }> {
-  const legs: { what: string; url: string; model: string; key: string | undefined }[] = [
-    { what: "groq transcription", url: GROQ_TRANSCRIBE_URL, model: GROQ_TRANSCRIBE_MODEL, key: c.env.GROQ_API_KEY },
-    { what: "openai transcription", url: OPENAI_TRANSCRIBE_URL, model: OPENAI_TRANSCRIBE_MODEL, key: c.env.OPENAI_API_KEY },
+): Promise<{ ok: true; text: string; provider: string } | { ok: false; what: string; status: number }> {
+  const legs = [
+    { who: "groq", what: "groq transcription", url: GROQ_TRANSCRIBE_URL, model: GROQ_TRANSCRIBE_MODEL, key: c.env.GROQ_API_KEY },
+    { who: "openai", what: "openai transcription", url: OPENAI_TRANSCRIBE_URL, model: OPENAI_TRANSCRIBE_MODEL, key: c.env.OPENAI_API_KEY },
   ];
 
   let last = { what: "transcription", status: 0 };
@@ -312,7 +312,7 @@ async function transcribeUpstream(
       last = { what: leg.what, status: 0 };
       continue;
     }
-    if (res.ok) return { ok: true, text: await res.text() };
+    if (res.ok) return { ok: true, text: await res.text(), provider: leg.who };
 
     // Logged on every fall-through, because falling through to OpenAI costs
     // real money and a Groq key that has quietly stopped working should show
@@ -397,7 +397,7 @@ proxy.post("/proxy/transcribe", async (c) => {
   // Audio seconds are known before the call, so settling confirms the
   // reservation rather than correcting it. It still has to happen: a
   // reservation nobody settles is swept back to the account in the end.
-  await db.settleUsage(c.env.DB, held.id, seconds);
+  await db.settleUsage(c.env.DB, held.id, seconds, attempt.provider);
   return c.json({ text, audio_seconds: seconds });
 });
 
@@ -505,7 +505,7 @@ proxy.post("/proxy/summarize", async (c) => {
   // Settled to whatever came back, because the tokens were spent either way.
   // A response that does not say costs the estimate rather than nothing, and
   // the unused part of the reservation goes back to the account here.
-  await db.settleUsage(c.env.DB, held.id, tokens || estimate);
+  await db.settleUsage(c.env.DB, held.id, tokens || estimate, "anthropic");
 
   const block = answer?.content?.find((b) => b.type === "tool_use" && b.name === SUMMARY_TOOL);
   // An empty object is a truthy object, so `block.input` being present is not
@@ -560,9 +560,10 @@ proxy.get("/proxy/usage", async (c) => {
   const account = c.get("account");
   if (!account) return c.json({ error: "not_signed_in" }, 401);
   const allowed = await allowanceFor(c.env.DB, account.id);
-  const [audio, tokens] = await Promise.all([
+  const [audio, tokens, split] = await Promise.all([
     db.usedThisPeriod(c.env.DB, account.id, "transcribe"),
     db.usedThisPeriod(c.env.DB, account.id, "summarize"),
+    db.providerSplit(c.env.DB, account.id, "transcribe"),
   ]);
   const audioLeft = Math.max(0, allowed.audio_seconds - audio);
   const tokensLeft = Math.max(0, allowed.summary_tokens - tokens);
@@ -575,5 +576,12 @@ proxy.get("/proxy/usage", async (c) => {
     // there keeps it next to the reservation rules it is derived from; a
     // panel doing its own arithmetic would drift the first time they change.
     recordable_seconds: recordableSeconds(audioLeft, tokensLeft),
+    // Which provider transcribed this account's audio this period. Groq is
+    // $0.111 an hour and the OpenAI fallback is $0.18, so a month is only as
+    // cheap as this says it was. "unrecorded" is a call from before the
+    // provider was written down, not a third provider.
+    transcribed_by: Object.fromEntries(
+      split.map((row) => [row.provider || "unrecorded", { calls: row.calls, seconds: row.units }]),
+    ),
   });
 });

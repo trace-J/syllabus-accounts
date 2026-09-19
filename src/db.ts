@@ -416,11 +416,49 @@ export async function recordUsage(
   deviceId: string,
   kind: UsageKind,
   units: number,
+  provider = "",
 ): Promise<void> {
   await db
-    .prepare("INSERT INTO usage (id, account_id, device_id, kind, units, period, created_at, state) VALUES (?, ?, ?, ?, ?, ?, ?, 'final')")
-    .bind(randomId(12), accountId, deviceId, kind, Math.max(0, Math.round(units)), usagePeriod(), now())
+    .prepare(
+      "INSERT INTO usage (id, account_id, device_id, kind, units, period, created_at, state, provider)" +
+        " VALUES (?, ?, ?, ?, ?, ?, ?, 'final', ?)",
+    )
+    .bind(randomId(12), accountId, deviceId, kind, Math.max(0, Math.round(units)), usagePeriod(), now(), provider)
     .run();
+}
+
+/**
+ * How one account's work this period split across the providers that served it.
+ *
+ * This is the question a fallback makes worth asking: transcription runs on
+ * Groq at $0.111 an hour and falls back to OpenAI at $0.18, so the share on
+ * each leg is the difference between a forecast and a guess.
+ *
+ * Scoped to one account because that is whose data it is. The fleet-wide
+ * version of this query is an operator's, not an endpoint's; it is
+ * `npm run split` and it goes straight at D1.
+ *
+ * Reservations are excluded: a call still in flight has no provider yet, and
+ * counting it would put a live call in the "unrecorded" bucket and make the
+ * record look holed. Rows come back busiest first.
+ */
+export async function providerSplit(
+  db: D1Database,
+  accountId: string,
+  kind: UsageKind,
+  period = usagePeriod(),
+): Promise<{ provider: string; calls: number; units: number }[]> {
+  const rows = await db
+    .prepare(
+      `SELECT provider, COUNT(*) AS calls, COALESCE(SUM(units), 0) AS units
+         FROM usage
+        WHERE account_id = ? AND kind = ? AND period = ? AND state = 'final'
+        GROUP BY provider
+        ORDER BY units DESC`,
+    )
+    .bind(accountId, kind, period)
+    .all<{ provider: string; calls: number; units: number }>();
+  return rows.results ?? [];
 }
 
 /** How long a reservation may sit before it is treated as a Worker that died. */
@@ -462,11 +500,23 @@ export async function reserveUsage(
   return row ? { id: row.id } : null;
 }
 
-/** The call happened and cost this much. The reservation becomes the bill. */
-export async function settleUsage(db: D1Database, id: string, units: number): Promise<void> {
+/**
+ * The call happened and cost this much. The reservation becomes the bill.
+ *
+ * `provider` is who actually served it, which is only knowable now: the
+ * reservation was written before the call, and on the transcribe path the
+ * provider is whichever leg answered. Left empty it means "not recorded",
+ * which is what every row from before this column says.
+ */
+export async function settleUsage(
+  db: D1Database,
+  id: string,
+  units: number,
+  provider = "",
+): Promise<void> {
   await db
-    .prepare("UPDATE usage SET units = ?, state = 'final' WHERE id = ? AND state = 'reserved'")
-    .bind(Math.max(0, Math.round(units)), id)
+    .prepare("UPDATE usage SET units = ?, provider = ?, state = 'final' WHERE id = ? AND state = 'reserved'")
+    .bind(Math.max(0, Math.round(units)), provider, id)
     .run();
 }
 

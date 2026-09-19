@@ -619,6 +619,76 @@ describe("which transcription provider gets the audio", () => {
     expect(await db.usedThisPeriod(env.DB, account.id, "transcribe")).toBe(0);
   });
 
+  it("writes down which provider served it, on the same row as the seconds", async () => {
+    byHost({ groq: () => new Response("from groq", { status: 200 }) });
+    const { account, token } = await claimDevice("split-groq@example.com");
+    await postAudio(m4aForm(480, 480), bearer(token));
+
+    const rows = await env.DB.prepare("SELECT provider, units, state FROM usage WHERE account_id = ?").bind(account.id).all();
+    expect(rows.results).toEqual([{ provider: "groq", units: 480, state: "final" }]);
+  });
+
+  it("writes down openai when the fallback is what answered", async () => {
+    byHost({
+      groq: () => new Response("busy", { status: 429 }),
+      openai: () => new Response("from openai", { status: 200 }),
+    });
+    const { account, token } = await claimDevice("split-openai@example.com");
+    await postAudio(m4aForm(480, 480), bearer(token));
+
+    const row = await env.DB.prepare("SELECT provider, units FROM usage WHERE account_id = ?").bind(account.id).first();
+    // The expensive leg is billed the same seconds and is not silent about it.
+    expect(row).toEqual({ provider: "openai", units: 480 });
+  });
+
+  it("reports the split on /proxy/usage, counting each leg separately", async () => {
+    const { account, token } = await claimDevice("split-both@example.com");
+    await db.putAllowance(env.DB, account.id, 5000, TRIAL_ALLOWANCE.summary_tokens, "test");
+
+    byHost({ groq: () => new Response("from groq", { status: 200 }) });
+    await postAudio(m4aForm(480, 480), bearer(token));
+    await postAudio(m4aForm(300, 300), bearer(token));
+
+    byHost({
+      groq: () => new Response("busy", { status: 429 }),
+      openai: () => new Response("from openai", { status: 200 }),
+    });
+    await postAudio(m4aForm(600, 600), bearer(token));
+
+    const res = await get("/proxy/usage", bearer(token));
+    const body = (await res.json()) as { transcribed_by: Record<string, { calls: number; seconds: number }> };
+    expect(body.transcribed_by).toEqual({
+      groq: { calls: 2, seconds: 780 },
+      openai: { calls: 1, seconds: 600 },
+    });
+  });
+
+  it("leaves a failed call out of the split entirely", async () => {
+    byHost({
+      groq: () => new Response("down", { status: 500 }),
+      openai: () => new Response("down", { status: 500 }),
+    });
+    const { token } = await claimDevice("split-nothing@example.com");
+    expect((await postAudio(m4aForm(480, 480), bearer(token))).status).toBe(502);
+
+    const res = await get("/proxy/usage", bearer(token));
+    // The reservation was released, so there is no row and nothing to attribute.
+    expect((await res.json() as { transcribed_by: object }).transcribed_by).toEqual({});
+  });
+
+  it("does not count a reservation still in flight as an unrecorded provider", async () => {
+    const { account, token } = await claimDevice("split-inflight@example.com");
+    // A call that reserved and never settled: a Worker that died mid-flight.
+    await db.reserveUsage(env.DB, account.id, "dev", "transcribe", 480, 5000);
+
+    const res = await get("/proxy/usage", bearer(token));
+    const body = (await res.json()) as { transcribed_by: object; audio_seconds: { used: number } };
+    // It still holds allowance, because that is what a reservation is for...
+    expect(body.audio_seconds.used).toBe(480);
+    // ...but it has no provider yet, so it is not a hole in the record.
+    expect(body.transcribed_by).toEqual({});
+  });
+
   it("goes straight to OpenAI when there is no Groq key", async () => {
     const saved = env.GROQ_API_KEY;
     // How this service runs before the secret is set: OpenAI alone, as before.

@@ -173,6 +173,18 @@ working should show up in the logs and not on a card statement. `GROQ_API_KEY`
 is optional: with it unset every transcription goes to OpenAI, exactly as
 before.
 
+Every settled usage row records which provider served it, so the split can be
+read back rather than caught live in the logs. An account sees its own on
+`GET /proxy/usage` as `transcribed_by`. Across every account, which is an
+operator's question and deliberately not an endpoint:
+
+    npm run split
+
+That goes straight at D1 and groups transcription seconds by period and
+provider. A month that looks cheap in a forecast and expensive on the card is
+a month where the `openai` row is larger than you thought. `unrecorded` is a
+call from before this column existed, not a third provider.
+
 This is not a general-purpose API gateway, and the difference matters because
 the keys being spent are ours. The model, the upstream URL, the request
 shape, the system prompt and the response schema are all fixed in `proxy.ts`
