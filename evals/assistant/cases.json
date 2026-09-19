@@ -1,0 +1,300 @@
+{
+  "_comment": [
+    "Forty study questions against Trace's own lectures, written 2026-09-19.",
+    "",
+    "tags[0] is the stage the question SHOULD be answered at: 'summaries' when",
+    "the course notes carry enough, 'course' when answering well needs the",
+    "instructor's actual words. That label is a judgment about this question",
+    "against this material; it is NOT a claim about how often real students",
+    "escalate. The real escalation rate is measured in production, by the",
+    "assist_sessions table, and this eval cannot stand in for it.",
+    "",
+    "expect_escalation: true, false, or 'either' when both routes are",
+    "defensible and only the answer is graded.",
+    "",
+    "A case with 'followups' is run as one real multi-turn session, which is",
+    "also how the cache is exercised: turn two should read what turn one wrote."
+  ],
+  "cases": [
+    {
+      "id": "acct-plantwide-vs-departmental",
+      "tags": ["summaries", "ACCT-4321", "concept"],
+      "expect_escalation": false,
+      "question": "What's the difference between a plant-wide overhead rate and departmental rates, and why would a company bother with departmental ones?"
+    },
+    {
+      "id": "acct-equivalent-units",
+      "tags": ["summaries", "ACCT-4321", "exam-prep"],
+      "expect_escalation": false,
+      "question": "How do I compute equivalent units of production? She said the definition is on the exam so I want it exactly right.",
+      "followups": [
+        "Why are materials and conversion calculated separately?",
+        "Work it for me: 8,000 units in ending WIP, 100% complete for materials and 40% for conversion, 34,500 transferred out."
+      ]
+    },
+    {
+      "id": "acct-markup-multiplier",
+      "tags": ["summaries", "ACCT-4321", "concept"],
+      "expect_escalation": false,
+      "question": "If a job has an 80% markup do I multiply the cost by 0.8 or by 1.8? I keep getting this one wrong."
+    },
+    {
+      "id": "acct-under-over-applied",
+      "tags": ["summaries", "ACCT-4321", "concept"],
+      "expect_escalation": false,
+      "question": "Underapplied vs overapplied overhead: which is which, and which way does cost of goods sold move in each case?"
+    },
+    {
+      "id": "acct-four-documents",
+      "tags": ["summaries", "ACCT-4321", "recall"],
+      "expect_escalation": false,
+      "question": "What are the four job order costing documents I need to know for the quiz, and what does each one do?"
+    },
+    {
+      "id": "acct-conversion-costs",
+      "tags": ["summaries", "ACCT-4321", "concept"],
+      "expect_escalation": false,
+      "question": "Why does process costing lump labor and overhead together as conversion costs instead of keeping them separate?"
+    },
+    {
+      "id": "acct-cm-ratio",
+      "tags": ["summaries", "ACCT-4321", "concept"],
+      "expect_escalation": false,
+      "question": "Explain the contribution margin ratio and how it relates to the variable expense ratio."
+    },
+    {
+      "id": "acct-fifo-on-exam",
+      "tags": ["summaries", "ACCT-4321", "logistics"],
+      "expect_escalation": false,
+      "question": "Do I need to know how to actually calculate FIFO for process costing?"
+    },
+    {
+      "id": "acct-cogm-formulas",
+      "tags": ["summaries", "ACCT-4321", "recall"],
+      "expect_escalation": false,
+      "question": "Give me the schedule of cost of goods manufactured formulas in order. She said they're essential for the quiz."
+    },
+    {
+      "id": "acct-disposing-overhead",
+      "tags": ["summaries", "ACCT-4321", "concept"],
+      "expect_escalation": false,
+      "question": "There are two ways to close out the overhead account at period end. What are they and when would you use each?"
+    },
+    {
+      "id": "entr3306-creative-destruction",
+      "tags": ["summaries", "ENTR-3306", "concept"],
+      "expect_escalation": false,
+      "question": "Explain Schumpeter's cycle of creative destruction and why the patent system is part of it.",
+      "followups": [
+        "Why did he bring up the Soviet Union in the middle of that?"
+      ]
+    },
+    {
+      "id": "entr3306-brain-drain",
+      "tags": ["summaries", "ENTR-3306", "recall"],
+      "expect_escalation": false,
+      "question": "What is a brain drain and which ones did we cover in class?"
+    },
+    {
+      "id": "entr3306-three-economies",
+      "tags": ["summaries", "ENTR-3306", "concept"],
+      "expect_escalation": false,
+      "question": "What's the difference between the industrial, information and molecular economies, and which kind of labor does each one replace?"
+    },
+    {
+      "id": "entr3306-adaptation-gap",
+      "tags": ["summaries", "ENTR-3306", "concept"],
+      "expect_escalation": false,
+      "question": "He keeps saying innovation is outrunning our ability to adapt. What's the actual argument there?"
+    },
+    {
+      "id": "entr3306-orwell-huxley",
+      "tags": ["summaries", "ENTR-3306", "concept"],
+      "expect_escalation": false,
+      "question": "What's the distinction he drew between what Orwell feared and what Huxley feared?"
+    },
+    {
+      "id": "entr3306-spillover",
+      "tags": ["summaries", "ENTR-3306", "recall"],
+      "expect_escalation": false,
+      "question": "Define technological spillover and give me the example he used."
+    },
+    {
+      "id": "entr3306-me-too",
+      "tags": ["summaries", "ENTR-3306", "concept"],
+      "expect_escalation": false,
+      "question": "What's a me-too business and why is a coffee shop the example he keeps coming back to?"
+    },
+    {
+      "id": "entr3306-rainhill",
+      "tags": ["summaries", "ENTR-3306", "recall"],
+      "expect_escalation": false,
+      "question": "What were the Rainhill Trials and which locomotives entered?"
+    },
+    {
+      "id": "entr4306-innovators-dilemma",
+      "tags": ["summaries", "ENTR-4306", "concept"],
+      "expect_escalation": false,
+      "question": "What is the innovator's dilemma? Use the Blockbuster case to explain it."
+    },
+    {
+      "id": "entr4306-four-quadrants",
+      "tags": ["summaries", "ENTR-4306", "exam-prep"],
+      "expect_escalation": false,
+      "question": "Explain the four innovation stream quadrants with an example of each. I need this for the group presentation."
+    },
+    {
+      "id": "entr4306-exploit-explore",
+      "tags": ["summaries", "ENTR-4306", "concept"],
+      "expect_escalation": false,
+      "question": "Exploitation versus exploration: what's the difference, and does exploitation count as innovation at all?"
+    },
+    {
+      "id": "entr4306-tacit-knowledge",
+      "tags": ["summaries", "ENTR-4306", "exam-prep"],
+      "expect_escalation": false,
+      "question": "Explicit versus tacit knowledge. She said this is likely to matter for the exam, so why is tacit the more valuable one?"
+    },
+    {
+      "id": "entr4306-five-powers",
+      "tags": ["summaries", "ENTR-4306", "recall"],
+      "expect_escalation": false,
+      "question": "What are the five types of power we covered, with an example of each?"
+    },
+    {
+      "id": "entr4306-leadership-vs-management",
+      "tags": ["summaries", "ENTR-4306", "concept"],
+      "expect_escalation": false,
+      "question": "How does she distinguish leadership from management? She had a line about trains."
+    },
+    {
+      "id": "entr4306-what-business",
+      "tags": ["summaries", "ENTR-4306", "concept"],
+      "expect_escalation": false,
+      "question": "The \"what business are you really in\" point: which companies did she use and what's the lesson?"
+    },
+    {
+      "id": "entr4306-situational-leadership",
+      "tags": ["summaries", "ENTR-4306", "recall"],
+      "expect_escalation": false,
+      "question": "What are the four styles in Hershey and Blanchard's situational leadership and when do you use each?"
+    },
+    {
+      "id": "reli-five-theories",
+      "tags": ["summaries", "RELI-3304", "recall"],
+      "expect_escalation": false,
+      "question": "What are the five theories of inspiration and which one did most of the class land on?",
+      "followups": [
+        "Why does he say the theory you pick actually matters?"
+      ]
+    },
+    {
+      "id": "reli-greek-john21",
+      "tags": ["summaries", "RELI-3304", "concept"],
+      "expect_escalation": false,
+      "question": "Why does he keep insisting we need Greek? Explain the John 21 example."
+    },
+    {
+      "id": "cross-innovation-word",
+      "tags": ["summaries", "cross-course", "synthesis"],
+      "expect_escalation": false,
+      "question": "Both my entrepreneurship classes use the word innovation constantly but they seem to mean different things. How is ENTR-3306 using it versus ENTR-4306?"
+    },
+    {
+      "id": "cross-whats-due",
+      "tags": ["summaries", "cross-course", "logistics"],
+      "expect_escalation": false,
+      "question": "What do I have due across all my classes in the next week?"
+    },
+    {
+      "id": "cross-exam-flags",
+      "tags": ["summaries", "cross-course", "exam-prep"],
+      "expect_escalation": false,
+      "question": "Across all four classes, what has an instructor actually said would be on an exam?"
+    },
+    {
+      "id": "quiz-process-costing",
+      "tags": ["summaries", "ACCT-4321", "quiz-mode"],
+      "expect_escalation": false,
+      "mode": "quiz",
+      "question": "Quiz me on process costing."
+    },
+    {
+      "id": "absent-abc-chapter7",
+      "tags": ["summaries", "ACCT-4321", "not-covered"],
+      "expect_escalation": "either",
+      "question": "Explain activity-based costing the way she taught it in chapter 7."
+    },
+    {
+      "id": "absent-my-grade",
+      "tags": ["summaries", "ACCT-4321", "not-covered"],
+      "expect_escalation": false,
+      "question": "What's my current grade in ACCT-4321?"
+    },
+    {
+      "id": "absent-standard-costing",
+      "tags": ["summaries", "ACCT-4321", "not-covered"],
+      "expect_escalation": "either",
+      "question": "Did she cover standard costing and variance analysis yet?"
+    },
+    {
+      "id": "course-brunel-numbers",
+      "tags": ["course", "ACCT-4321", "worked-example"],
+      "expect_escalation": true,
+      "course": "ACCT-4321",
+      "question": "In the Brunel Company walkthrough my notes say a couple of different overhead numbers came up. What did she actually work in class, and which one is right?"
+    },
+    {
+      "id": "course-flowpack-walkthrough",
+      "tags": ["course", "ACCT-4321", "worked-example"],
+      "expect_escalation": true,
+      "course": "ACCT-4321",
+      "question": "Walk me through the Flowpack problem exactly the way she did it in class, including anything she said about where people go wrong."
+    },
+    {
+      "id": "course-wiper-story",
+      "tags": ["course", "ENTR-3306", "verbatim"],
+      "expect_escalation": true,
+      "course": "ENTR-3306",
+      "question": "He told a story about the guy who invented the intermittent windshield wiper. Tell it the way he told it, with everything he said around it."
+    },
+    {
+      "id": "course-att-bell",
+      "tags": ["course", "ENTR-4306", "verbatim"],
+      "expect_escalation": true,
+      "course": "ENTR-4306",
+      "question": "She told an AT&T story about ringing a bell for sales. I want the whole thing, the details and the point she drew from it."
+    },
+    {
+      "id": "course-epiripto",
+      "tags": ["course", "RELI-3304", "verbatim"],
+      "expect_escalation": true,
+      "course": "RELI-3304",
+      "question": "Give me back what he said about epiripto in 1 Peter 5:7, as close to how he said it as you can get."
+    },
+    {
+      "id": "guide-acct",
+      "tags": ["course", "ACCT-4321", "study-guide"],
+      "expect_escalation": true,
+      "course": "ACCT-4321",
+      "mode": "study_guide",
+      "question": "Make me a study guide for accounting."
+    },
+    {
+      "id": "guide-entr3306",
+      "tags": ["course", "ENTR-3306", "study-guide"],
+      "expect_escalation": true,
+      "course": "ENTR-3306",
+      "mode": "study_guide",
+      "question": "Study guide for ENTR-3306 please."
+    },
+    {
+      "id": "guide-reli",
+      "tags": ["course", "RELI-3304", "study-guide"],
+      "expect_escalation": true,
+      "course": "RELI-3304",
+      "mode": "study_guide",
+      "question": "I need a study guide for the religion class."
+    }
+  ]
+}

@@ -7,3 +7,9 @@ dist/
 
 # git worktrees for parallel Claude Code sessions
 .claude/worktrees/
+
+# Eval runs: the traces are full of lecture content, and this repo is public.
+.claude/hillclimb/*/*/results*.jsonl
+.claude/hillclimb/*/*/errors.jsonl
+.claude/hillclimb/*/*/traces/
+.claude/hillclimb/*/*/ref/

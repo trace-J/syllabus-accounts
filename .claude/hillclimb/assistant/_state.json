@@ -1,0 +1,55 @@
+{
+  "flow": "assistant",
+  "description": "The Syllabus study assistant: Claude Sonnet 5 against Claude Opus 5 on real course material.",
+  "harness_paths": [
+    "src/prompts.ts",
+    "evals/assistant/cases.json"
+  ],
+  "metrics": [
+    {
+      "id": "acceptable",
+      "label": "Acceptable",
+      "kind": "binary",
+      "note": "Would the grader hand this answer to the student as it stands. The headline: an answer that invents anything is never acceptable."
+    },
+    {
+      "id": "quality",
+      "label": "Rubric",
+      "kind": "scalar",
+      "note": "Share of the five rubric criteria met: grounded, cited, complete, useful, honest about gaps."
+    },
+    {
+      "id": "routing",
+      "label": "Right stage",
+      "kind": "binary",
+      "note": "Did the session pull one course's transcripts exactly when this question needed them. Only on cases labeled true or false."
+    },
+    {
+      "id": "win",
+      "label": "Win vs Opus",
+      "kind": "binary",
+      "note": "Pairwise only, and only once a frozen Opus 5 baseline exists. 1 better, 0.5 tie, 0 worse."
+    }
+  ],
+  "perf_fields": [
+    "latency_s",
+    "cost_usd",
+    "api_calls",
+    "usage"
+  ],
+  "prices": {
+    "claude-opus-5": {
+      "in": 5.0,
+      "out": 25.0
+    },
+    "claude-sonnet-5": {
+      "in": 2.0,
+      "out": 10.0
+    },
+    "claude-opus-4-8": {
+      "in": 5.0,
+      "out": 25.0
+    }
+  },
+  "harness_sha": "3bd1ecaf45c47625850a2dd3dfe910ef9d0d2f14623cd978fb4cb03c1c3d87d2"
+}
