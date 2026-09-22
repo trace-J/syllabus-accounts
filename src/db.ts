@@ -1,6 +1,7 @@
 /** Every query in one place, typed against the rows in migrations/. */
 
 import type { Account, Device } from "./env";
+import type { AllowanceGrant } from "./tiers";
 import { now, randomId } from "./util";
 
 export type GoogleIdentity = {
@@ -364,6 +365,8 @@ export type Allowance = {
   account_id: string;
   audio_seconds: number;
   summary_tokens: number;
+  /** Pro's study sessions. Written, never enforced yet; see migrations/0010. */
+  assistant_sessions: number;
   source: string;
   updated_at: string;
 };
@@ -377,21 +380,22 @@ export async function allowance(db: D1Database, accountId: string): Promise<Allo
   return db.prepare("SELECT * FROM allowances WHERE account_id = ?").bind(accountId).first<Allowance>();
 }
 
-/** What slice 4 will call once an account's entitlement is known. */
-export async function putAllowance(
-  db: D1Database,
-  accountId: string,
-  audioSeconds: number,
-  summaryTokens: number,
-  source: string,
-): Promise<void> {
+/**
+ * Write what an account may spend. Only the Stripe webhook should call this.
+ *
+ * The grant is the shape src/tiers.ts produces, so the entitlement rules and
+ * the row they become never drift apart.
+ */
+export async function putAllowance(db: D1Database, accountId: string, grant: AllowanceGrant): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO allowances (account_id, audio_seconds, summary_tokens, source, updated_at) VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO allowances (account_id, audio_seconds, summary_tokens, assistant_sessions, source, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT (account_id) DO UPDATE SET audio_seconds = excluded.audio_seconds,
-         summary_tokens = excluded.summary_tokens, source = excluded.source, updated_at = excluded.updated_at`,
+         summary_tokens = excluded.summary_tokens, assistant_sessions = excluded.assistant_sessions,
+         source = excluded.source, updated_at = excluded.updated_at`,
     )
-    .bind(accountId, audioSeconds, summaryTokens, source, now())
+    .bind(accountId, grant.audio_seconds, grant.summary_tokens, grant.assistant_sessions, grant.source, now())
     .run();
 }
 
@@ -590,4 +594,118 @@ export async function hitRateLimit(
 /** Windows that have closed are of no further use; clear them opportunistically. */
 export async function sweepRateLimits(db: D1Database, before: number): Promise<void> {
   await db.prepare("DELETE FROM rate_limits WHERE window_start < ?").bind(before).run();
+}
+
+// --- Stripe subscriptions and webhook events --------------------------------
+
+/**
+ * One row of migrations/0010: what Stripe last said about a subscription.
+ *
+ * `tier` is resolved from `price_id` when the row is written, so a price
+ * retired in the dashboard does not make old rows unreadable. The entitlement
+ * rules that read all of this live in src/tiers.ts.
+ */
+export type Subscription = {
+  stripe_subscription_id: string;
+  account_id: string;
+  stripe_customer_id: string;
+  price_id: string;
+  tier: string;
+  status: string;
+  /** ISO 8601 UTC, or '' when Stripe did not send one. */
+  current_period_end: string;
+  /** 0 or 1. SQLite has no boolean. */
+  cancel_at_period_end: number;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Every subscription an account holds, oldest first. Usually one. */
+export async function subscriptionsOf(db: D1Database, accountId: string): Promise<Subscription[]> {
+  const res = await db
+    .prepare("SELECT * FROM subscriptions WHERE account_id = ? ORDER BY created_at")
+    .bind(accountId)
+    .all<Subscription>();
+  return res.results;
+}
+
+export async function subscriptionById(db: D1Database, stripeSubscriptionId: string): Promise<Subscription | null> {
+  return db
+    .prepare("SELECT * FROM subscriptions WHERE stripe_subscription_id = ?")
+    .bind(stripeSubscriptionId)
+    .first<Subscription>();
+}
+
+/** Which account a Stripe customer belongs to, or null if we have never seen one. */
+export async function accountIdForCustomer(db: D1Database, stripeCustomerId: string): Promise<string | null> {
+  const row = await db
+    .prepare("SELECT account_id FROM subscriptions WHERE stripe_customer_id = ? ORDER BY created_at DESC LIMIT 1")
+    .bind(stripeCustomerId)
+    .first<{ account_id: string }>();
+  return row?.account_id ?? null;
+}
+
+/**
+ * Record what Stripe says about a subscription, creating or updating the row.
+ *
+ * `created_at` is when we first heard of the subscription, not when Stripe
+ * created it, and is left alone on an update: it is what orders an account's
+ * rows when none of them entitles any more.
+ */
+export async function putSubscription(
+  db: D1Database,
+  sub: Omit<Subscription, "created_at" | "updated_at">,
+): Promise<void> {
+  const ts = now();
+  await db
+    .prepare(
+      `INSERT INTO subscriptions (stripe_subscription_id, account_id, stripe_customer_id, price_id, tier, status,
+         current_period_end, cancel_at_period_end, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (stripe_subscription_id) DO UPDATE SET account_id = excluded.account_id,
+         stripe_customer_id = excluded.stripe_customer_id, price_id = excluded.price_id, tier = excluded.tier,
+         status = excluded.status, current_period_end = excluded.current_period_end,
+         cancel_at_period_end = excluded.cancel_at_period_end, updated_at = excluded.updated_at`,
+    )
+    .bind(
+      sub.stripe_subscription_id,
+      sub.account_id,
+      sub.stripe_customer_id,
+      sub.price_id,
+      sub.tier,
+      sub.status,
+      sub.current_period_end,
+      sub.cancel_at_period_end ? 1 : 0,
+      ts,
+      ts,
+    )
+    .run();
+}
+
+/**
+ * Claim a Stripe event id, or say it was already handled.
+ *
+ * True means this delivery is the first and the handler should run. The claim
+ * is the INSERT itself rather than a SELECT followed by one, so two deliveries
+ * arriving together cannot both find nothing and both grant a month.
+ */
+export async function claimStripeEvent(
+  db: D1Database,
+  eventId: string,
+  type: string,
+  accountId = "",
+): Promise<boolean> {
+  const res = await db
+    .prepare("INSERT OR IGNORE INTO stripe_events (id, type, account_id, received_at) VALUES (?, ?, ?, ?)")
+    .bind(eventId, type, accountId, now())
+    .run();
+  return (res.meta?.changes ?? 0) > 0;
+}
+
+/** Attach the account to an event that was claimed before we knew whose it was. */
+export async function attributeStripeEvent(db: D1Database, eventId: string, accountId: string): Promise<void> {
+  await db
+    .prepare("UPDATE stripe_events SET account_id = ? WHERE id = ? AND account_id = ''")
+    .bind(accountId, eventId)
+    .run();
 }
