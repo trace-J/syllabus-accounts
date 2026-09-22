@@ -48,11 +48,15 @@
     // Which Stripe price is which tier (src/tiers.ts). A price id is public and
     // appears in a Checkout URL, so these are vars rather than secrets. They
     // live here rather than in the tier table because test mode and live mode
-    // have different ids. Empty until the Products exist in the dashboard; an
-    // empty id matches no price, so the tier simply cannot be bought yet.
-    "STRIPE_PRICE_STARTER": "",
-    "STRIPE_PRICE_STANDARD": "",
-    "STRIPE_PRICE_PRO": ""
+    // have different ids, so these three get swapped when billing goes live.
+    //
+    // Getting one wrong is quiet rather than loud: an unrecognized price grants
+    // Starter, and a SWAPPED pair grants the wrong tier at the right price
+    // without anything to notice it. Check them against the amounts in the
+    // Stripe dashboard, not against the order they were pasted in.
+    "STRIPE_PRICE_STARTER": "price_1UIZmJ1sga9TFYVNoVgeFkvF",
+    "STRIPE_PRICE_STANDARD": "price_1UIZmh1sga9TFYVNKLS39XwF",
+    "STRIPE_PRICE_PRO": "price_1UIZnK1sga9TFYVNBDt3fkLm"
   },
   "observability": { "enabled": true }
 }
