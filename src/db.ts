@@ -702,10 +702,49 @@ export async function claimStripeEvent(
   return (res.meta?.changes ?? 0) > 0;
 }
 
+/**
+ * Give an event id back, so Stripe's retry is handled rather than skipped.
+ *
+ * The claim is held only for events that were actually dealt with. A handler
+ * that failed, or one that could not work out whose event it was, releases it
+ * and answers 500; Stripe then retries, and the retry finds nothing claimed.
+ */
+export async function releaseStripeEvent(db: D1Database, eventId: string): Promise<void> {
+  await db.prepare("DELETE FROM stripe_events WHERE id = ?").bind(eventId).run();
+}
+
 /** Attach the account to an event that was claimed before we knew whose it was. */
 export async function attributeStripeEvent(db: D1Database, eventId: string, accountId: string): Promise<void> {
   await db
     .prepare("UPDATE stripe_events SET account_id = ? WHERE id = ? AND account_id = ''")
     .bind(accountId, eventId)
     .run();
+}
+
+/**
+ * Remember which account a Stripe customer is, learned at checkout.
+ *
+ * Kept after a subscription ends: somebody who resubscribes arrives as the
+ * same customer, and the alternative is a webhook that cannot be attributed.
+ * The first writer wins, because a customer belongs to one account and a
+ * later event claiming otherwise is a bug rather than a move.
+ */
+export async function linkStripeCustomer(
+  db: D1Database,
+  stripeCustomerId: string,
+  accountId: string,
+): Promise<void> {
+  await db
+    .prepare("INSERT OR IGNORE INTO stripe_customers (stripe_customer_id, account_id, created_at) VALUES (?, ?, ?)")
+    .bind(stripeCustomerId, accountId, now())
+    .run();
+}
+
+/** The account a Stripe customer belongs to, from the link made at checkout. */
+export async function accountIdForLinkedCustomer(db: D1Database, stripeCustomerId: string): Promise<string | null> {
+  const row = await db
+    .prepare("SELECT account_id FROM stripe_customers WHERE stripe_customer_id = ?")
+    .bind(stripeCustomerId)
+    .first<{ account_id: string }>();
+  return row?.account_id ?? null;
 }

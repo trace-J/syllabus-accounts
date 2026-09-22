@@ -9,6 +9,10 @@
 // Optional:
 //   GROQ_API_KEY           the cheaper transcription key /proxy prefers. Unset
 //                          means every transcription goes to OpenAI.
+//   STRIPE_WEBHOOK_SECRET  what Stripe signs webhook deliveries with. Unset
+//                          means /stripe/webhook refuses every delivery.
+//   STRIPE_SECRET_KEY      the Stripe API key. The webhook never spends it;
+//                          Checkout and the Billing Portal will.
 // For local dev, the same names go in .dev.vars, which is gitignored.
 {
   "$schema": "node_modules/wrangler/config-schema.json",

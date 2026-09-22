@@ -238,13 +238,58 @@ what it may spend, as numbers). No recording, transcript, or API key ever
 comes here: audio and transcripts stream through the proxy to the provider
 and only the unit count is kept.
 
-`subscriptions` mirrors what Stripe says an account pays for, and
-`stripe_events` records every webhook event id so a retried delivery is
-handled once. Neither carries a card number or anything else about a payment
-method; Stripe holds all of that. `src/tiers.ts` is the one place the tiers
-are written down, and turns a subscription into the `allowances` row the
-proxy reads. Nothing writes an `allowances` row yet: every account is on the
-trial until the Stripe webhook lands.
+`subscriptions` mirrors what Stripe says an account pays for, `stripe_events`
+records every webhook event id so a retried delivery is handled once, and
+`stripe_customers` is which account a Stripe customer is. None of them carries
+a card number or anything else about a payment method; Stripe holds all of
+that.
+
+## Billing
+
+Stripe owns the subscription. This service mirrors it, and the mirror is what
+decides what anybody may spend:
+
+    POST /stripe/webhook     authenticated by Stripe's signature alone
+
+`src/tiers.ts` is the one place the tiers are written down: which price is
+which tier, and what each tier is worth in audio seconds, summary tokens and
+study sessions. The webhook writes what Stripe said into `subscriptions`,
+works out the allowance from those rules, and puts it in `allowances`. The
+proxy reads that row and is the only thing that enforces it. A panel may hide
+and dim; it runs on the user's Mac, so it is never asked.
+
+Nothing else writes an allowance. An account with no row is on the trial (5
+hours, 150k tokens), which is every account that has never subscribed. An
+account whose subscription ended gets a row of zeros rather than the trial
+back, because the trial handed back every month would be five free hours
+forever. A row marked `owner` is granted by hand and the webhook leaves it
+alone.
+
+Three things a webhook has to get right, and how:
+
+- **The raw body.** The signature covers the bytes Stripe sent, so the body is
+  read as text and handed to Stripe's verifier rather than parsed first.
+- **Idempotency.** Stripe retries until it gets a 2xx and redelivers even
+  after one. Every delivery claims its event id in `stripe_events` with an
+  INSERT, so a second delivery loses the race rather than granting a second
+  month. A delivery that fails gives the claim back, so the retry does the
+  work instead of being told it was already done.
+- **Order.** Events arrive in any order. A subscription event that beats its
+  own checkout session cannot be attributed to anybody, so it is answered with
+  a 500 and Stripe retries it, by which time the session has landed.
+
+Price ids are vars (`STRIPE_PRICE_STARTER`, `_STANDARD`, `_PRO`), because test
+mode and live mode have different ones. `STRIPE_WEBHOOK_SECRET` is a secret,
+and while it is unset the webhook refuses every delivery rather than trusting
+one.
+
+Known gap, for the slice that adds the Billing Portal: an allowance row is a
+snapshot written when an event arrives, so a cancellation Stripe never manages
+to deliver leaves the last grant in place. The staleness rule in `tiers.ts`
+only applies when a row is derived, not to one already written. Stripe retries
+for about three days and shows the failures in its dashboard, so this is a
+gap rather than a hole, and closing it means sweeping `allowances` against
+`subscriptions` on a schedule.
 
 ## What was retired
 
