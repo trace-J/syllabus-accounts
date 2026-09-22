@@ -113,17 +113,26 @@ stripeHooks.post("/stripe/webhook", async (c) => {
 });
 
 /**
+ * A Stripe client that works inside workerd.
+ *
+ * The SDK reaches for Node's HTTP client by default, which does not exist
+ * here, so it is given the fetch one. Every caller in this service goes
+ * through this rather than constructing its own, so there is one place where
+ * that is true.
+ */
+export function stripeClient(env: Bindings): Stripe {
+  return new Stripe(env.STRIPE_SECRET_KEY ?? "sk_unset", { httpClient: Stripe.createFetchHttpClient() });
+}
+
+/**
  * Stripe's own verifier, told how to work inside workerd.
  *
- * The SDK's default HTTP client and crypto provider are Node's, and the
- * synchronous `constructEvent` throws here, so both are replaced. No request
- * is made: verification is an HMAC over the raw body, and the API key is
- * never spent.
+ * The synchronous `constructEvent` throws here, so the async one is used with
+ * the SubtleCrypto provider. No request is made: verification is an HMAC over
+ * the raw body, and the API key is never spent.
  */
 async function verify(env: Bindings, raw: string, signature: string): Promise<Stripe.Event> {
-  const stripe = new Stripe(env.STRIPE_SECRET_KEY ?? "sk_unset", {
-    httpClient: Stripe.createFetchHttpClient(),
-  });
+  const stripe = stripeClient(env);
   return stripe.webhooks.constructEventAsync(
     raw,
     signature,

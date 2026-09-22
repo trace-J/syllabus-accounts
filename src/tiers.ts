@@ -203,3 +203,30 @@ export function entitlingSubscription(subs: Subscription[], at: Date = new Date(
   }
   return best;
 }
+
+/**
+ * The tiers as a person reads them, in the order the pricing page lists them.
+ *
+ * Here rather than beside the Checkout routes so that the account page can
+ * render a price without importing the Stripe SDK to do it. The wording
+ * agrees with maincoursemedia.com/syllabus without copying it: two places
+ * that describe the same three plans should not drift, and neither should
+ * read as a paste of the other.
+ */
+export const SELLABLE: { tier: TierName; label: string; note: string }[] = [
+  {
+    tier: "starter",
+    label: "Starter",
+    note: `$${TIERS.starter.price_usd} a month, ${TIERS.starter.audio_hours} hours. About two courses.`,
+  },
+  {
+    tier: "standard",
+    label: "Standard",
+    note: `$${TIERS.standard.price_usd} a month, ${TIERS.standard.audio_hours} hours. Most popular.`,
+  },
+  {
+    tier: "pro",
+    label: "Pro",
+    note: `$${TIERS.pro.price_usd} a month, ${TIERS.pro.audio_hours} hours, plus ${TIERS.pro.assistant_sessions} study sessions.`,
+  },
+];

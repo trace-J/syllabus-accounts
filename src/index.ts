@@ -20,6 +20,7 @@ import { google } from "./google";
 import { accountPage, landing, privacyPage, termsPage } from "./pages";
 import { proxy } from "./proxy";
 import { panelUrl, relay, relayState } from "./relay";
+import { billing, billingView } from "./billing";
 import { settings } from "./settings";
 import { stripeHooks } from "./stripe";
 import { drive } from "./drive";
@@ -66,7 +67,17 @@ app.get("/", async (c) => {
   const relays = Object.fromEntries(
     await Promise.all(devices.map(async (d) => [d.id, await relayState(c.env, d.id).catch(() => null)] as const)),
   );
-  return c.html(accountPage(account, devices, await db.driveGrant(c.env.DB, account.id), relays, c.env.PUBLIC_URL));
+  return c.html(
+    accountPage(
+      account,
+      devices,
+      await db.driveGrant(c.env.DB, account.id),
+      relays,
+      c.env.PUBLIC_URL,
+      await billingView(c, account.id),
+      c.req.query("billing") ?? "",
+    ),
+  );
 });
 
 /** Who am I: for a panel checking its token, or a browser checking its session. */
@@ -93,6 +104,7 @@ app.route("/", google);
 app.route("/", devices);
 app.route("/", relay);
 app.route("/", settings);
+app.route("/", billing);
 app.route("/", drive);
 app.route("/", proxy);
 

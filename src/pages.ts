@@ -1,7 +1,9 @@
 /** The few pages this Worker shows a person. Plain HTML, one stylesheet. */
 
+import type { BillingView } from "./billing";
 import type { DriveGrant } from "./db";
 import type { Account, Device } from "./env";
+import { SELLABLE, TIERS, type TierName } from "./tiers";
 import { escapeHtml as h, panelUrl } from "./util";
 
 const STYLE = `
@@ -123,6 +125,8 @@ export function accountPage(
   grant: DriveGrant | null = null,
   relays: Record<string, RelayInfo> = {},
   publicUrl = "",
+  billing: BillingView | null = null,
+  notice = "",
 ): string {
   const rows = devices.length
     ? devices
@@ -135,18 +139,126 @@ export function accountPage(
     : `<tr><td colspan="3" class="muted">No Macs yet. Open the Setup page in Syllabus and choose Sign in to a Syllabus account.</td></tr>`;
   return page(
     "Your Syllabus account",
-    `<p>Signed in as <strong>${h(account.email)}</strong>${account.name ? ` (${h(account.name)})` : ""}.
+    `${billingNotice(notice)}<p>Signed in as <strong>${h(account.email)}</strong>${account.name ? ` (${h(account.name)})` : ""}.
         <form method="post" action="/logout" style="display:inline"><button>Sign out</button></form></p>
      <h2>Your Macs</h2>
      <p class="muted">Each Mac's panel has an address here that only you can open, from any browser or phone, whenever that Mac is awake and its panel is running.</p>
      <table><tbody>${rows}</tbody></table>
      ${devices.length ? signOutEverything : ""}
+     <h2>Your plan</h2>
+     ${billingSection(billing)}
      <h2>Google Drive</h2>
      ${driveSection(grant)}
      <h2>Connect a Mac</h2>
      <p class="muted">Syllabus shows a code on its Setup page. Enter it here.</p>
      ${codeForm("", "")}`,
   );
+}
+
+/**
+ * A word about the checkout the person has just come back from.
+ *
+ * Coming back is not the same as having paid. Stripe redirects the moment its
+ * own page is done, and what an account may spend is written when the webhook
+ * arrives, which is usually within a second but is a different event. So this
+ * says what happened at Stripe and lets the plan below say what is true here,
+ * rather than promising a plan this page has not read yet.
+ */
+function billingNotice(notice: string): string {
+  if (notice === "done") {
+    return `<p class="ok">Thanks. Stripe has your subscription. It can take a moment to show up below.</p>`;
+  }
+  if (notice === "canceled") return `<p class="muted">No change was made and nothing was charged.</p>`;
+  return "";
+}
+
+/**
+ * What the person is paying for, and what is left of it.
+ *
+ * Every number here is read from the same `allowances` row the proxy
+ * enforces, so the page cannot flatter the account. It does not decide
+ * anything: a panel that is refused is refused by the proxy, not by what this
+ * paragraph says.
+ */
+function billingSection(view: BillingView | null): string {
+  if (!view) return `<p class="muted">Billing is not switched on yet.</p>`;
+
+  const source = view.allowance?.source || "trial";
+  const allowedSeconds = view.allowance?.audio_seconds ?? 5 * 3600;
+  const left = Math.max(0, allowedSeconds - view.audioUsed);
+  const usedLine = view.audioUsed <= 0
+    ? `<p class="muted">Nothing recorded this month. All ${hours(allowedSeconds)} are yours.</p>`
+    : `<p class="muted">${hours(view.audioUsed)} of ${hours(allowedSeconds)} used this month. ${hours(left)} left.</p>`;
+
+  const sub = view.subscription;
+  const manage = view.hasCustomer
+    ? `<form method="post" action="/billing/portal" style="display:inline"><button>Manage billing</button></form>`
+    : "";
+
+  if (source === "lapsed" || (sub && sub.status === "canceled")) {
+    return `<p class="warn">Your subscription has ended, so there are no hours on this account.</p>
+      <p class="muted">Starting one again picks up where you left off. Your notes in Drive were never touched.</p>
+      ${tierButtons()}${manage ? `<p>${manage}</p>` : ""}`;
+  }
+
+  if (sub) {
+    const name = sub.tier ? sub.tier[0].toUpperCase() + sub.tier.slice(1) : "Your plan";
+    const ends = sub.current_period_end ? onDate(sub.current_period_end) : "";
+    const renewal = !ends
+      ? ""
+      : sub.cancel_at_period_end
+        ? `<p class="warn">Ends ${ends}. You keep these hours until then.</p>`
+        : `<p class="muted">Renews ${ends}.</p>`;
+    const state = sub.status === "past_due"
+      ? `<p class="warn">Stripe could not charge your card and is trying again. Nothing has been cut off.</p>`
+      : "";
+    return `<p><strong>${h(name)}</strong>, $${priceOf(sub.tier)} a month.</p>${state}${renewal}${usedLine}
+      <p>${manage}</p>`;
+  }
+
+  return `<p>You are on the free trial: <strong>5 hours</strong> of lecture audio.</p>${usedLine}
+    <p class="muted">Pick a plan to keep recording once the trial is used up. Every plan files to your own Drive, and you can change or cancel it yourself at any time.</p>
+    ${tierButtons()}`;
+}
+
+function tierButtons(): string {
+  return SELLABLE.map(
+    (t) => `<form method="post" action="/billing/checkout" class="row" style="margin:0.4em 0">
+        <input type="hidden" name="tier" value="${h(t.tier)}">
+        <button class="primary">Choose ${h(t.label)}</button>
+        <span class="muted">${h(t.note)}</span>
+      </form>`,
+  ).join("");
+}
+
+function priceOf(tier: string): number {
+  return TIERS[tier as TierName]?.price_usd ?? 0;
+}
+
+/**
+ * Seconds as something a person says out loud.
+ *
+ * Rounded to one decimal below ten hours and to whole hours above, because
+ * "36 hours left" is what somebody plans a week around and "36.4" is not.
+ * Singulars are handled: a first lecture should not read "1 hours".
+ */
+function hours(seconds: number): string {
+  if (seconds <= 0) return "none";
+  if (seconds < 60) return "under a minute";
+  if (seconds < 3600) {
+    const mins = Math.round(seconds / 60);
+    return `${mins} ${mins === 1 ? "minute" : "minutes"}`;
+  }
+  const count = seconds / 3600;
+  const shown = count >= 10 ? Math.round(count) : Math.round(count * 10) / 10;
+  return `${shown} ${shown === 1 ? "hour" : "hours"}`;
+}
+
+/** A renewal date, said the way a date is said rather than logged. */
+function onDate(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  return at.toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
 }
 
 /**

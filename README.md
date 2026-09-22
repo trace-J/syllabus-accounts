@@ -249,7 +249,20 @@ that.
 Stripe owns the subscription. This service mirrors it, and the mirror is what
 decides what anybody may spend:
 
+    POST /billing/checkout   (session) start a Stripe Checkout for a tier
+    POST /billing/portal     (session) open Stripe's Billing Portal
     POST /stripe/webhook     authenticated by Stripe's signature alone
+
+The two billing routes take a browser session, never a panel's device token.
+A device token sits on a laptop for months, and buying or canceling is not
+something a panel does on its owner's behalf. Both hand off to a page Stripe
+hosts, so no card number, billing address or tax id is ever typed into
+anything this service serves.
+
+Neither route grants anything. A Checkout that completes and a webhook that
+never arrives leaves the account exactly where it was, which is the right way
+around. The account page says so rather than promising a plan it has not read
+yet.
 
 `src/tiers.ts` is the one place the tiers are written down: which price is
 which tier, and what each tier is worth in audio seconds, summary tokens and
@@ -283,13 +296,39 @@ mode and live mode have different ones. `STRIPE_WEBHOOK_SECRET` is a secret,
 and while it is unset the webhook refuses every delivery rather than trusting
 one.
 
-Known gap, for the slice that adds the Billing Portal: an allowance row is a
-snapshot written when an event arrives, so a cancellation Stripe never manages
-to deliver leaves the last grant in place. The staleness rule in `tiers.ts`
-only applies when a row is derived, not to one already written. Stripe retries
-for about three days and shows the failures in its dashboard, so this is a
-gap rather than a hole, and closing it means sweeping `allowances` against
-`subscriptions` on a schedule.
+Known gap: an allowance row is a snapshot written when an event arrives, so a
+cancellation Stripe never manages to deliver leaves the last grant in place.
+The staleness rule in `tiers.ts` only applies when a row is derived, not to
+one already written. Stripe retries for about three days and shows the
+failures in its dashboard, so this is a gap rather than a hole, and closing it
+means sweeping `allowances` against `subscriptions` on a schedule.
+
+### Going live
+
+Everything above was built against a Stripe **sandbox**, which is isolated:
+its own data, its own keys, its own webhook endpoints. Nothing in it carries
+over. At launch these are recreated in live mode, and each one produces a new
+value that has to land here:
+
+1. The three Products and Prices. The new `price_` ids replace the three
+   `STRIPE_PRICE_*` vars in `wrangler.jsonc`, which is a commit and a deploy.
+2. The webhook endpoint, at the same `/stripe/webhook` URL. Its new signing
+   secret replaces `STRIPE_WEBHOOK_SECRET`.
+3. The live secret key replaces `STRIPE_SECRET_KEY`.
+4. The 100%-off coupon and its promotion code.
+5. The Texas tax registration, and the SaaS tax code on each product. Tax
+   settings are per-mode as well.
+
+Two of those are quiet when wrong. A price id that matches nothing grants
+Starter and says so in the log; a price id that matches the WRONG tier grants
+the wrong plan at the right price and nothing has anything to compare it
+against, so check each one against its amount in the dashboard. And a signing
+secret from the other mode fails every delivery as a bad signature, which
+looks like an attack rather than a typo.
+
+Activating the live side of the account is separate and slower: entity
+details, EIN, a bank account, identity verification. It blocks nothing in the
+sandbox, so it is worth starting well before it is needed.
 
 ## What was retired
 

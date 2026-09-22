@@ -740,6 +740,15 @@ export async function linkStripeCustomer(
     .run();
 }
 
+/** The Stripe customer an account is, if it has ever reached checkout. */
+export async function stripeCustomerOf(db: D1Database, accountId: string): Promise<string | null> {
+  const row = await db
+    .prepare("SELECT stripe_customer_id FROM stripe_customers WHERE account_id = ? ORDER BY created_at LIMIT 1")
+    .bind(accountId)
+    .first<{ stripe_customer_id: string }>();
+  return row?.stripe_customer_id ?? null;
+}
+
 /** The account a Stripe customer belongs to, from the link made at checkout. */
 export async function accountIdForLinkedCustomer(db: D1Database, stripeCustomerId: string): Promise<string | null> {
   const row = await db
