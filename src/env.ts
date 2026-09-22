@@ -38,6 +38,13 @@ export type Bindings = {
   STRIPE_PRICE_STANDARD: string;
   STRIPE_PRICE_PRO: string;
   /**
+   * One top-up: 5 more hours for this month, bought when a cap stops
+   * somebody. A one-time Price in Stripe, not a recurring one. Empty until it
+   * exists, and an empty one means the top-up button is not offered rather
+   * than offered and broken.
+   */
+  STRIPE_PRICE_TOPUP: string;
+  /**
    * Secret, OPTIONAL: what Stripe signs its webhooks with.
    * `wrangler secret put STRIPE_WEBHOOK_SECRET`.
    *

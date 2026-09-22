@@ -45,6 +45,8 @@
 
 import { Hono, type Context } from "hono";
 import * as db from "./db";
+import { endTrialIfSpent } from "./stripe";
+import { TRIAL_ALLOWANCE } from "./tiers";
 import type { AppEnv } from "./env";
 import { mp4DurationSeconds } from "./mp4";
 import { profileSpec, userMessage } from "./prompts";
@@ -129,12 +131,13 @@ const RATE_WINDOW_SECONDS = 60;
 const RATE_LIMITS = { transcribe: 20, summarize: 5 } as const;
 
 /**
- * The allowance an account has before slice 4 gives it a real one: the
- * 5-hour trial. Audio is metered in seconds, summaries in tokens (input plus
- * output). 5 hours of lecture needs about 48k summary tokens, so the token
- * figure is headroom for retries rather than a second product limit.
+ * The 5-hour trial, re-exported from where the rules live.
+ *
+ * It is both the allowance an account has before anything writes it one, and
+ * what a subscription still inside its Stripe trial is worth, so it is
+ * defined once in tiers.ts and read from here.
  */
-export const TRIAL_ALLOWANCE = { audio_seconds: 5 * 3600, summary_tokens: 150_000 };
+export { TRIAL_ALLOWANCE } from "./tiers";
 
 /**
  * What this whole service may spend in a month, across every account.
@@ -193,13 +196,27 @@ function ceilingReached(kind: db.UsageKind): Refusal {
   };
 }
 
-/** The account's allowance for the month: its own row, or the trial default. */
+/**
+ * The account's allowance for the month: its own row, or the trial default,
+ * plus anything it has topped up with this period.
+ *
+ * Top-ups are added here rather than written into the allowance row, because
+ * the row is recomputed from the subscription every time Stripe says
+ * anything, and a top-up somebody paid for must not be erased by a renewal.
+ * Adding them at the point of reading also means the reservation, the global
+ * ceiling and the refusal all keep working with no change: they see one
+ * larger number, exactly as they would for a larger plan.
+ */
 async function allowanceFor(database: D1Database, accountId: string) {
-  const row = await db.allowance(database, accountId);
+  const [row, extra] = await Promise.all([
+    db.allowance(database, accountId),
+    db.topupsThisPeriod(database, accountId),
+  ]);
   return {
-    audio_seconds: row?.audio_seconds ?? TRIAL_ALLOWANCE.audio_seconds,
-    summary_tokens: row?.summary_tokens ?? TRIAL_ALLOWANCE.summary_tokens,
+    audio_seconds: (row?.audio_seconds ?? TRIAL_ALLOWANCE.audio_seconds) + extra.audio_seconds,
+    summary_tokens: (row?.summary_tokens ?? TRIAL_ALLOWANCE.summary_tokens) + extra.summary_tokens,
     source: row?.source || "trial",
+    topped_up: extra.audio_seconds > 0,
   };
 }
 
@@ -398,6 +415,12 @@ proxy.post("/proxy/transcribe", async (c) => {
   // reservation rather than correcting it. It still has to happen: a
   // reservation nobody settles is swept back to the account in the end.
   await db.settleUsage(c.env.DB, held.id, seconds, attempt.provider);
+  // Spending the last of a Stripe trial is what ends it: the card that was
+  // collected at checkout is charged and the plan's real allowance arrives by
+  // webhook. Done after the answer is already settled and outside the
+  // response, because a paid call must not wait on Stripe's API to return
+  // audio the caller has already been billed for.
+  c.executionCtx.waitUntil(endTrialIfSpent(c.env, account.id));
   return c.json({ text, audio_seconds: seconds });
 });
 
@@ -570,6 +593,10 @@ proxy.get("/proxy/usage", async (c) => {
   return c.json({
     period: db.usagePeriod(),
     source: allowed.source,
+    // Whether the figures below include hours bought on top of the plan, so a
+    // panel can say "20 hours, 5 of them topped up" rather than implying the
+    // plan grew.
+    topped_up: allowed.topped_up,
     audio_seconds: { used: audio, allowance: allowed.audio_seconds, left: audioLeft },
     summary_tokens: { used: tokens, allowance: allowed.summary_tokens, left: tokensLeft },
     // The one number a panel can act on. Working it out here rather than

@@ -250,6 +250,7 @@ Stripe owns the subscription. This service mirrors it, and the mirror is what
 decides what anybody may spend:
 
     POST /billing/checkout   (session) start a Stripe Checkout for a tier
+    POST /billing/topup      (session) buy 5 more hours for this month
     POST /billing/portal     (session) open Stripe's Billing Portal
     POST /stripe/webhook     authenticated by Stripe's signature alone
 
@@ -277,6 +278,38 @@ account whose subscription ended gets a row of zeros rather than the trial
 back, because the trial handed back every month would be five free hours
 forever. A row marked `owner` is granted by hand and the webhook leaves it
 alone.
+
+### The trial, and the cap
+
+The trial this product sells is **5 hours of audio**, which is not something
+Stripe can count. So it is expressed as a subscription with a 90-day Stripe
+trial and cut short when the hours run out: a `trialing` subscription is worth
+the 5 hours rather than its plan's month, and `endTrialIfSpent` asks Stripe to
+end it the moment they are spent. Stripe then charges the card collected at
+checkout, sends `customer.subscription.updated`, and the plan's real allowance
+arrives by the usual road. That call happens after a transcription has already
+settled and inside `waitUntil`, so a paid call never waits on Stripe's API.
+
+Redeeming a 100%-off code is a different Checkout session, because it needs
+the opposite answer about the card. A trial owes nothing today, so Stripe only
+collects a card when told to collect one always; the friends and family path
+must not ask for a card at all. One session cannot be both and Checkout cannot
+know in advance which it is, so the person says. Somebody with a code gets no
+trial, which costs them nothing, because their subscription is free from the
+first day.
+
+**A cap is a hard stop and never a surprise bill.** An account that runs out
+is refused by the proxy and offered one more purchase: 5 hours for $5, a
+one-time payment that lands on the current month only. Top-ups are summed at
+the point the allowance is READ, not written into the allowance row, because
+that row is recomputed from the subscription every time Stripe says anything
+and hours somebody paid for must not be erased by a renewal. The reservation,
+the global ceiling and the refusal all see one larger number and need no
+change.
+
+The account page adds top-ups the same way the proxy does. It got that wrong
+once during this work and showed a capped account hours it was in fact allowed
+to use, which is the one way that section is allowed to be wrong.
 
 Three things a webhook has to get right, and how:
 
@@ -310,8 +343,9 @@ its own data, its own keys, its own webhook endpoints. Nothing in it carries
 over. At launch these are recreated in live mode, and each one produces a new
 value that has to land here:
 
-1. The three Products and Prices. The new `price_` ids replace the three
-   `STRIPE_PRICE_*` vars in `wrangler.jsonc`, which is a commit and a deploy.
+1. The three Products and Prices, plus the one-time top-up Price. The new
+   `price_` ids replace the four `STRIPE_PRICE_*` vars in `wrangler.jsonc`,
+   which is a commit and a deploy.
 2. The webhook endpoint, at the same `/stripe/webhook` URL. Its new signing
    secret replaces `STRIPE_WEBHOOK_SECRET`.
 3. The live secret key replaces `STRIPE_SECRET_KEY`.

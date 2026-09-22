@@ -3,7 +3,7 @@
 import type { BillingView } from "./billing";
 import type { DriveGrant } from "./db";
 import type { Account, Device } from "./env";
-import { SELLABLE, TIERS, type TierName } from "./tiers";
+import { SELLABLE, TIERS, TOPUP, TRIAL_ALLOWANCE, type TierName } from "./tiers";
 import { escapeHtml as h, panelUrl } from "./util";
 
 const STYLE = `
@@ -169,6 +169,9 @@ function billingNotice(notice: string): string {
     return `<p class="ok">Thanks. Stripe has your subscription. It can take a moment to show up below.</p>`;
   }
   if (notice === "canceled") return `<p class="muted">No change was made and nothing was charged.</p>`;
+  if (notice === "topped-up") {
+    return `<p class="ok">Thanks. Your extra hours land as soon as Stripe confirms the payment, usually within a moment.</p>`;
+  }
   return "";
 }
 
@@ -184,15 +187,28 @@ function billingSection(view: BillingView | null): string {
   if (!view) return `<p class="muted">Billing is not switched on yet.</p>`;
 
   const source = view.allowance?.source || "trial";
-  const allowedSeconds = view.allowance?.audio_seconds ?? 5 * 3600;
+  // The SAME sum the proxy enforces: the plan's row plus anything bought on
+  // top of it this month. Leaving the top-up out here once showed a capped
+  // account hours it was in fact allowed to record, which is the one way this
+  // section is allowed to be wrong and is not.
+  const allowedSeconds = (view.allowance?.audio_seconds ?? TRIAL_ALLOWANCE.audio_seconds) + view.toppedUp;
   const left = Math.max(0, allowedSeconds - view.audioUsed);
   const usedLine = view.audioUsed <= 0
     ? `<p class="muted">Nothing recorded this month. All ${hours(allowedSeconds)} are yours.</p>`
-    : `<p class="muted">${hours(view.audioUsed)} of ${hours(allowedSeconds)} used this month. ${hours(left)} left.</p>`;
+    : left <= 0
+      ? `<p class="warn">All ${hours(allowedSeconds)} are used. Recording is stopped until you add more or the month turns over, and nothing is being billed for going over.</p>`
+      : `<p class="muted">${hours(view.audioUsed)} of ${hours(allowedSeconds)} used this month${view.toppedUp > 0 ? `, ${hours(view.toppedUp)} of it topped up` : ""}. ${hours(left)} left.</p>`;
 
   const sub = view.subscription;
   const manage = view.hasCustomer
     ? `<form method="post" action="/billing/portal" style="display:inline"><button>Manage billing</button></form>`
+    : "";
+  // Offered when the hours are gone, which is the only moment it is the right
+  // answer. A cap is a hard stop, so this is the way past one, and it is one
+  // click rather than a bill that arrives later.
+  const topUp = view.canTopUp && left <= 0
+    ? `<p><form method="post" action="/billing/topup" style="display:inline"><button class="primary">Add ${TOPUP.audio_hours} hours for $${TOPUP.price_usd}</button></form>
+       <span class="muted">A one-time payment. These hours are for this month.</span></p>`
     : "";
 
   if (source === "lapsed" || (sub && sub.status === "canceled")) {
@@ -201,8 +217,25 @@ function billingSection(view: BillingView | null): string {
       ${tierButtons()}${manage ? `<p>${manage}</p>` : ""}`;
   }
 
+  if (sub && sub.status === "trialing") {
+    const name = tierName(sub.tier);
+    const plan = `$${priceOf(sub.tier)} a month for ${TIERS[sub.tier as TierName]?.audio_hours ?? 0} hours`;
+    // Spending the trial is what ends it, and the proxy has already asked
+    // Stripe to do so by the time anybody reads this. So the answer here is
+    // the plan arriving, not a top-up: the plan is more hours for less money
+    // than five bought one at a time.
+    if (left <= 0) {
+      return `<p>Your trial hours are used up, so <strong>${h(name)}</strong> is starting now.</p>
+        <p class="muted">Stripe is charging the card you gave at checkout, ${plan}. This page shows the new hours as soon as that goes through.</p>
+        <p>${manage}</p>`;
+    }
+    return `<p>You are trying <strong>${h(name)}</strong>, with <strong>${hours(allowedSeconds)}</strong> of lecture audio to see how it goes.</p>
+      <p class="muted">Your card is not charged until those hours are used up, or ${onDate(sub.current_period_end) || "the trial runs out"}, whichever comes first. Then it is ${plan}.</p>
+      ${usedLine}<p>${manage}</p>`;
+  }
+
   if (sub) {
-    const name = sub.tier ? sub.tier[0].toUpperCase() + sub.tier.slice(1) : "Your plan";
+    const name = tierName(sub.tier);
     const ends = sub.current_period_end ? onDate(sub.current_period_end) : "";
     const renewal = !ends
       ? ""
@@ -212,13 +245,34 @@ function billingSection(view: BillingView | null): string {
     const state = sub.status === "past_due"
       ? `<p class="warn">Stripe could not charge your card and is trying again. Nothing has been cut off.</p>`
       : "";
-    return `<p><strong>${h(name)}</strong>, $${priceOf(sub.tier)} a month.</p>${state}${renewal}${usedLine}
+    return `<p><strong>${h(name)}</strong>, $${priceOf(sub.tier)} a month.</p>${state}${renewal}${usedLine}${topUp}
       <p>${manage}</p>`;
   }
 
-  return `<p>You are on the free trial: <strong>5 hours</strong> of lecture audio.</p>${usedLine}
-    <p class="muted">Pick a plan to keep recording once the trial is used up. Every plan files to your own Drive, and you can change or cancel it yourself at any time.</p>
-    ${tierButtons()}`;
+  return `<p>You are on the free trial: <strong>${hours(allowedSeconds)}</strong> of lecture audio.</p>${usedLine}
+    <p class="muted">Pick a plan to keep recording once the trial is used up. Every plan starts with 5 hours to try, your card is not charged until those are gone, and you can change or cancel it yourself at any time.</p>
+    ${tierButtons()}${redeemForm()}`;
+}
+
+function tierName(tier: string): string {
+  return tier ? tier[0].toUpperCase() + tier.slice(1) : "Your plan";
+}
+
+/**
+ * The way in for somebody with a 100%-off code.
+ *
+ * Its own form because it is its own kind of session: no trial, and no card
+ * asked for. Checkout cannot know in advance that a code will be typed into
+ * it, so the person says so here instead.
+ */
+function redeemForm(): string {
+  const options = SELLABLE.map((t) => `<option value="${h(t.tier)}">${h(t.label)}</option>`).join("");
+  return `<p class="muted" style="margin-top:1.5em">Have a code from us?</p>
+    <form method="post" action="/billing/checkout" class="row">
+      <input type="hidden" name="redeem" value="1">
+      <select name="tier">${options}</select>
+      <button>Redeem a code</button>
+    </form>`;
 }
 
 function tierButtons(): string {

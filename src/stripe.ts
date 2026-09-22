@@ -29,7 +29,7 @@ import { Hono, type Context } from "hono";
 import Stripe from "stripe";
 import * as db from "./db";
 import type { AppEnv, Bindings } from "./env";
-import { allowanceFromSubscription, entitlingSubscription, tierForPrice } from "./tiers";
+import { allowanceFromSubscription, entitlingSubscription, tierForPrice, TOPUP, TRIAL_ALLOWANCE } from "./tiers";
 
 export const stripeHooks = new Hono<AppEnv>();
 
@@ -120,7 +120,7 @@ stripeHooks.post("/stripe/webhook", async (c) => {
  * through this rather than constructing its own, so there is one place where
  * that is true.
  */
-export function stripeClient(env: Bindings): Stripe {
+export function stripeClient(env: Pick<Bindings, "STRIPE_SECRET_KEY">): Stripe {
   return new Stripe(env.STRIPE_SECRET_KEY ?? "sk_unset", { httpClient: Stripe.createFetchHttpClient() });
 }
 
@@ -164,8 +164,28 @@ async function handle(c: Context<AppEnv>, event: Stripe.Event): Promise<string> 
       return "";
     }
     await db.linkStripeCustomer(c.env.DB, customerId, accountId);
-    // The subscription's own events carry the price, the status and the
-    // period, so the allowance is written from those rather than from here.
+
+    // A one-time payment is a top-up. It has no subscription behind it, so
+    // this event is the only place the hours can be granted, and the session
+    // id is what stops a redelivery granting them twice.
+    if (session.mode === "payment") {
+      if (session.payment_status !== "paid") {
+        console.log(`stripe: top-up session ${session.id} is ${session.payment_status}; granting nothing`);
+        return accountId;
+      }
+      const granted = await db.recordTopup(
+        c.env.DB,
+        session.id,
+        accountId,
+        TOPUP.audio_seconds,
+        TOPUP.summary_tokens,
+      );
+      console.log(`stripe: top-up for ${accountId} ${granted ? "granted" : "was already granted"}`);
+      return accountId;
+    }
+
+    // A subscription's own events carry the price, the status and the period,
+    // so the allowance is written from those rather than from here.
     return accountId;
   }
 
@@ -269,4 +289,56 @@ async function writeAllowance(c: Context<AppEnv>, accountId: string): Promise<vo
 function idOf(value: string | { id?: string } | null | undefined): string {
   if (typeof value === "string") return value;
   return value?.id ?? "";
+}
+
+
+/**
+ * End a Stripe trial once the 5 hours it stands for are spent.
+ *
+ * The trial this product sells is an amount of audio, and Stripe can only
+ * count days, so the two are reconciled here: the subscription is created
+ * with a long trial (src/billing.ts) and cut short the moment the hours run
+ * out. Stripe then charges the card that was collected at checkout and sends
+ * `customer.subscription.updated`, which is what writes the real allowance.
+ * Nothing is granted from inside this function.
+ *
+ * Called from the proxy after a transcription settles, inside waitUntil, so a
+ * paid call never waits on Stripe's API. Every early exit below is the normal
+ * case: almost nobody who finishes a lecture is on the last of a trial.
+ */
+export async function endTrialIfSpent(
+  // Narrowed to what it reads, so it is obvious this touches the database and
+  // one key and nothing else on the environment.
+  env: Pick<Bindings, "DB" | "STRIPE_SECRET_KEY">,
+  accountId: string,
+): Promise<void> {
+  if (!env.STRIPE_SECRET_KEY) return;
+  const allowance = await db.allowance(env.DB, accountId);
+  // An account with no row has never been through checkout, so there is no
+  // trial to end and no card to charge. That is the free trial, not this one.
+  if (allowance?.source !== "trial") return;
+
+  const used = await db.usedThisPeriod(env.DB, accountId, "transcribe");
+  if (used < TRIAL_ALLOWANCE.audio_seconds) return;
+
+  const trialing = (await db.subscriptionsOf(env.DB, accountId)).find((s) => s.status === "trialing");
+  if (!trialing) return;
+
+  // Stripe takes a second or two to answer with the updated subscription, and
+  // a panel uploading a lecture in chunks can arrive here several times
+  // inside that window. One attempt per account per window is enough to end a
+  // trial, and it means a webhook that never comes costs one call rather than
+  // one per chunk forever.
+  const gate = await db.hitRateLimit(env.DB, `trial-end:${accountId}`, 1, 300);
+  if (!gate.allowed) return;
+
+  try {
+    await stripeClient(env).subscriptions.update(trialing.stripe_subscription_id, { trial_end: "now" });
+    console.log(`stripe: trial spent, ended ${trialing.stripe_subscription_id} for ${accountId}`);
+  } catch (err) {
+    // Worth a line and nothing more. The trial ends on its own at the end of
+    // its period, and until then the account is simply out of hours and can
+    // top up, which is the same hard stop everybody else gets.
+    console.log(`stripe: could not end the trial for ${accountId}, ${(err as Error).message}`);
+  }
 }

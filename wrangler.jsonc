@@ -56,7 +56,11 @@
     // Stripe dashboard, not against the order they were pasted in.
     "STRIPE_PRICE_STARTER": "price_1UIZmJ1sga9TFYVNoVgeFkvF",
     "STRIPE_PRICE_STANDARD": "price_1UIZmh1sga9TFYVNKLS39XwF",
-    "STRIPE_PRICE_PRO": "price_1UIZnK1sga9TFYVNBDt3fkLm"
+    "STRIPE_PRICE_PRO": "price_1UIZnK1sga9TFYVNBDt3fkLm",
+    // A ONE-TIME price, not a recurring one: 5 more hours for the current
+    // month, sold when a cap stops somebody. Empty until it is created, and
+    // while it is empty the top-up is simply not offered.
+    "STRIPE_PRICE_TOPUP": ""
   },
   "observability": { "enabled": true }
 }
