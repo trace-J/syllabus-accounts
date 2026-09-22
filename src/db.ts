@@ -757,3 +757,52 @@ export async function accountIdForLinkedCustomer(db: D1Database, stripeCustomerI
     .first<{ account_id: string }>();
   return row?.account_id ?? null;
 }
+
+/**
+ * Hours somebody bought on top of their plan, this period.
+ *
+ * Summed rather than kept as a running balance, for the same reason usage is:
+ * two purchases landing together cannot disagree about a total that is
+ * derived. A period with no top-ups is two zeros, which is every account
+ * almost all of the time.
+ */
+export async function topupsThisPeriod(
+  db: D1Database,
+  accountId: string,
+  period = usagePeriod(),
+): Promise<{ audio_seconds: number; summary_tokens: number }> {
+  const row = await db
+    .prepare(
+      `SELECT COALESCE(SUM(audio_seconds), 0) AS audio_seconds, COALESCE(SUM(summary_tokens), 0) AS summary_tokens
+       FROM topups WHERE account_id = ? AND period = ?`,
+    )
+    .bind(accountId, period)
+    .first<{ audio_seconds: number; summary_tokens: number }>();
+  return { audio_seconds: row?.audio_seconds ?? 0, summary_tokens: row?.summary_tokens ?? 0 };
+}
+
+/**
+ * Record a top-up somebody paid for. Only the Stripe webhook should call this.
+ *
+ * The Stripe Checkout session id is the primary key, so a redelivered
+ * `checkout.session.completed` cannot grant the same hours twice even if the
+ * claim in stripe_events were somehow lost. Returns whether this call is what
+ * granted them.
+ */
+export async function recordTopup(
+  db: D1Database,
+  stripeSessionId: string,
+  accountId: string,
+  audioSeconds: number,
+  summaryTokens: number,
+  period = usagePeriod(),
+): Promise<boolean> {
+  const res = await db
+    .prepare(
+      `INSERT OR IGNORE INTO topups (stripe_session_id, account_id, period, audio_seconds, summary_tokens, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(stripeSessionId, accountId, period, audioSeconds, summaryTokens, now())
+    .run();
+  return (res.meta?.changes ?? 0) > 0;
+}

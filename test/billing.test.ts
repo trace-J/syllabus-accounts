@@ -62,12 +62,16 @@ describe("starting a checkout", () => {
     expect(calls[0].body.get("billing_address_collection")).toBe("required");
   });
 
-  it("takes a promotion code and does not demand a card for a free one", async () => {
+  it("takes a promotion code on either path", async () => {
+    // Whether a card is demanded differs between the trial and the redeem
+    // path, and test/trial.test.ts is where that split is held. The code box
+    // itself is on both.
     const { cookie } = await signedInAs("friend@example.com");
     const calls = stripeApi(() => json({ id: "cs_1", url: CHECKOUT_URL }));
     await postForm("/billing/checkout", { tier: "pro" }, { Cookie: cookie });
+    await postForm("/billing/checkout", { tier: "pro", redeem: "1" }, { Cookie: cookie });
     expect(calls[0].body.get("allow_promotion_codes")).toBe("true");
-    expect(calls[0].body.get("payment_method_collection")).toBe("if_required");
+    expect(calls[1].body.get("allow_promotion_codes")).toBe("true");
   });
 
   it("prefills the email for somebody Stripe has never met", async () => {
