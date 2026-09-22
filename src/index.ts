@@ -21,11 +21,21 @@ import { accountPage, landing, privacyPage, termsPage } from "./pages";
 import { proxy } from "./proxy";
 import { panelUrl, relay, relayState } from "./relay";
 import { settings } from "./settings";
+import { stripeHooks } from "./stripe";
 import { drive } from "./drive";
 import { sessionMiddleware } from "./session";
 import { DEVICE_TOKEN_PREFIX, sha256Hex } from "./util";
 
 const app = new Hono<AppEnv>();
+
+// Mounted BEFORE the auth middleware, and deliberately.
+//
+// Stripe carries neither a session cookie nor a device token, so the
+// middleware below has nothing to resolve for it. Hono runs handlers in the
+// order they were registered, so registering this route first is what keeps
+// the auth middleware off it: the webhook proves who it is with Stripe's
+// signature over the raw body and with nothing else.
+app.route("/", stripeHooks);
 
 app.use("*", async (c, next) => {
   c.set("account", null);

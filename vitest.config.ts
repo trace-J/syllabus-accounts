@@ -25,6 +25,8 @@ export default defineConfig(async () => {
             STRIPE_PRICE_STARTER: "price_test_starter",
             STRIPE_PRICE_STANDARD: "price_test_standard",
             STRIPE_PRICE_PRO: "price_test_pro",
+            STRIPE_WEBHOOK_SECRET: "whsec_test_secret",
+            STRIPE_SECRET_KEY: "sk_test_unused_by_the_webhook",
           },
         },
       }),

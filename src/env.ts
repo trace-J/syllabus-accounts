@@ -37,6 +37,25 @@ export type Bindings = {
   STRIPE_PRICE_STARTER: string;
   STRIPE_PRICE_STANDARD: string;
   STRIPE_PRICE_PRO: string;
+  /**
+   * Secret, OPTIONAL: what Stripe signs its webhooks with.
+   * `wrangler secret put STRIPE_WEBHOOK_SECRET`.
+   *
+   * Optional because there is no Stripe account yet. Unset means
+   * /stripe/webhook refuses every delivery with a 503 rather than trusting
+   * one, so this deploys safely before Stripe exists and starts working the
+   * moment the secret is set.
+   */
+  STRIPE_WEBHOOK_SECRET?: string;
+  /**
+   * Secret, OPTIONAL: the Stripe API key. `wrangler secret put STRIPE_SECRET_KEY`.
+   *
+   * The webhook does not spend it. Verifying a signature is local, and every
+   * field this service stores comes out of the event body, so a delivery is
+   * handled without calling Stripe back. It is here for the Checkout and
+   * Billing Portal sessions in the next slice.
+   */
+  STRIPE_SECRET_KEY?: string;
 };
 
 export type Account = {
