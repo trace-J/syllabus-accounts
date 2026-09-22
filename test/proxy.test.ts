@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as db from "../src/db";
 import { mp4DurationSeconds } from "../src/mp4";
 import { GLOBAL_CEILING, TRIAL_ALLOWANCE } from "../src/proxy";
-import { claimDevice, get, ORIGIN, postJson } from "./helpers";
+import { claimDevice, get, grant, ORIGIN, postJson } from "./helpers";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -234,7 +234,7 @@ describe("transcription", () => {
   it("stops at the monthly allowance before making the call", async () => {
     const calls = upstream(transcriptionOk());
     const { account, token, deviceId } = await claimDevice("capped@example.com");
-    await db.putAllowance(env.DB, account.id, 600, TRIAL_ALLOWANCE.summary_tokens, "test");
+    await db.putAllowance(env.DB, account.id, grant(600, TRIAL_ALLOWANCE.summary_tokens));
     await db.recordUsage(env.DB, account.id, deviceId, "transcribe", 500);
 
     const res = await postAudio(m4aForm(480, 480), bearer(token));
@@ -339,7 +339,7 @@ describe("summarizing", () => {
   it("stops at the token allowance before making the call", async () => {
     const calls = upstream(summaryOk());
     const { account, token } = await claimDevice("tokencap@example.com");
-    await db.putAllowance(env.DB, account.id, TRIAL_ALLOWANCE.audio_seconds, 1000, "test");
+    await db.putAllowance(env.DB, account.id, grant(TRIAL_ALLOWANCE.audio_seconds, 1000));
 
     const res = await postJson("/proxy/summarize", { transcript: "a lecture", course: "X", date: "2026-09-15" }, bearer(token));
     expect(res.status).toBe(402);
@@ -406,7 +406,7 @@ describe("what is left", () => {
     });
     expect(first.period).toBe(new Date().toISOString().slice(0, 7));
 
-    await db.putAllowance(env.DB, account.id, 45 * 3600, 900_000, "pro");
+    await db.putAllowance(env.DB, account.id, grant(45 * 3600, 900_000, "pro"));
     const second = (await (await get("/proxy/usage", bearer(token))).json()) as Record<string, any>;
     expect(second.source).toBe("pro");
     expect(second.audio_seconds.allowance).toBe(45 * 3600);
@@ -485,7 +485,7 @@ describe("two calls at once cannot both spend the last of the allowance", () => 
     const calls = slowUpstream(() => new Response("the transcript", { status: 200 }));
     const { account, token } = await claimDevice("race@example.com");
     // Room for one 480-second chunk, not two.
-    await db.putAllowance(env.DB, account.id, 600, TRIAL_ALLOWANCE.summary_tokens, "test");
+    await db.putAllowance(env.DB, account.id, grant(600, TRIAL_ALLOWANCE.summary_tokens));
 
     const [a, b] = await Promise.all([
       postAudio(m4aForm(480, 480), bearer(token)),
@@ -510,7 +510,7 @@ describe("two calls at once cannot both spend the last of the allowance", () => 
     );
     const { account, token } = await claimDevice("race2@example.com");
     // SUMMARY_MAX_TOKENS is 16000, so one estimate fits under 20000 and two do not.
-    await db.putAllowance(env.DB, account.id, TRIAL_ALLOWANCE.audio_seconds, 20_000, "test");
+    await db.putAllowance(env.DB, account.id, grant(TRIAL_ALLOWANCE.audio_seconds, 20_000));
 
     const [a, b] = await Promise.all([
       postJson("/proxy/summarize", { transcript: "a lecture ".repeat(100), subject: "ACCT" }, bearer(token)),
@@ -643,7 +643,7 @@ describe("which transcription provider gets the audio", () => {
 
   it("reports the split on /proxy/usage, counting each leg separately", async () => {
     const { account, token } = await claimDevice("split-both@example.com");
-    await db.putAllowance(env.DB, account.id, 5000, TRIAL_ALLOWANCE.summary_tokens, "test");
+    await db.putAllowance(env.DB, account.id, grant(5000, TRIAL_ALLOWANCE.summary_tokens));
 
     byHost({ groq: () => new Response("from groq", { status: 200 }) });
     await postAudio(m4aForm(480, 480), bearer(token));
@@ -709,7 +709,7 @@ describe("a reservation that is not spent goes back", () => {
   it("is released when the provider fails, so a retry still fits", async () => {
     upstream(() => new Response("upstream is down", { status: 503 }));
     const { account, token } = await claimDevice("failed@example.com");
-    await db.putAllowance(env.DB, account.id, 600, TRIAL_ALLOWANCE.summary_tokens, "test");
+    await db.putAllowance(env.DB, account.id, grant(600, TRIAL_ALLOWANCE.summary_tokens));
 
     expect((await postAudio(m4aForm(480, 480), bearer(token))).status).toBe(502);
     expect(await db.usedThisPeriod(env.DB, account.id, "transcribe")).toBe(0);
@@ -722,7 +722,7 @@ describe("a reservation that is not spent goes back", () => {
 
   it("is swept when a Worker dies holding one", async () => {
     const { account, token, deviceId } = await claimDevice("stale@example.com");
-    await db.putAllowance(env.DB, account.id, 600, TRIAL_ALLOWANCE.summary_tokens, "test");
+    await db.putAllowance(env.DB, account.id, grant(600, TRIAL_ALLOWANCE.summary_tokens));
     const held = await db.reserveUsage(env.DB, account.id, deviceId, "transcribe", 480, 600);
     expect(held).not.toBeNull();
     expect(await db.usedThisPeriod(env.DB, account.id, "transcribe")).toBe(480);

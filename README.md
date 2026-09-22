@@ -238,6 +238,14 @@ what it may spend, as numbers). No recording, transcript, or API key ever
 comes here: audio and transcripts stream through the proxy to the provider
 and only the unit count is kept.
 
+`subscriptions` mirrors what Stripe says an account pays for, and
+`stripe_events` records every webhook event id so a retried delivery is
+handled once. Neither carries a card number or anything else about a payment
+method; Stripe holds all of that. `src/tiers.ts` is the one place the tiers
+are written down, and turns a subscription into the `allowances` row the
+proxy reads. Nothing writes an `allowances` row yet: every account is on the
+trial until the Stripe webhook lands.
+
 ## What was retired
 
 The panel sign-in that a Cloudflare Tunnel needed. `/panel/authorize`,

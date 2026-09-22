@@ -1,6 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { serializeSigned } from "hono/utils/cookie";
 import { upsertAccount } from "../src/db";
+import type { AllowanceGrant } from "../src/tiers";
 import { SESSION_COOKIE } from "../src/session";
 
 export const ORIGIN = "https://accounts.test";
@@ -68,4 +69,9 @@ export async function claimDevice(email: string, name = "Test Mac") {
     device: { id: string };
   };
   return { account, cookie, token: polled.token, deviceId: polled.device.id, userCode: started.user_code };
+}
+
+/** An allowance row for a test, in the shape src/tiers.ts produces. */
+export function grant(audioSeconds: number, summaryTokens: number, source = "test"): AllowanceGrant {
+  return { audio_seconds: audioSeconds, summary_tokens: summaryTokens, assistant_sessions: 0, source };
 }

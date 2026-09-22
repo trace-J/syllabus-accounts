@@ -25,6 +25,18 @@ export type Bindings = {
   GROQ_API_KEY?: string;
   /** Secret: the summary key the proxy spends. `wrangler secret put ANTHROPIC_API_KEY`. */
   ANTHROPIC_API_KEY: string;
+  /**
+   * Which Stripe price is which tier. Vars, not secrets: a price id is public
+   * and appears in a Checkout URL. They are configuration rather than a table
+   * in src/tiers.ts because test mode and live mode have different ids, so a
+   * hardcoded one could only ever serve one of them.
+   *
+   * Empty until the Products are created in the Stripe dashboard. An empty
+   * one matches no price, so an unset id reads as "not this tier".
+   */
+  STRIPE_PRICE_STARTER: string;
+  STRIPE_PRICE_STANDARD: string;
+  STRIPE_PRICE_PRO: string;
 };
 
 export type Account = {

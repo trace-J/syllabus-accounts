@@ -40,7 +40,15 @@
     // project as the Desktop client Syllabus ships for `intake login`, so a Drive grant
     // from either sees the same files (drive.file is scoped to the creating project).
     // A client id is public by design; it appears in every sign-in URL.
-    "GOOGLE_CLIENT_ID": "61659290097-hch8n1iihe1jmejt96u35ud6202qgrl1.apps.googleusercontent.com"
+    "GOOGLE_CLIENT_ID": "61659290097-hch8n1iihe1jmejt96u35ud6202qgrl1.apps.googleusercontent.com",
+    // Which Stripe price is which tier (src/tiers.ts). A price id is public and
+    // appears in a Checkout URL, so these are vars rather than secrets. They
+    // live here rather than in the tier table because test mode and live mode
+    // have different ids. Empty until the Products exist in the dashboard; an
+    // empty id matches no price, so the tier simply cannot be bought yet.
+    "STRIPE_PRICE_STARTER": "",
+    "STRIPE_PRICE_STANDARD": "",
+    "STRIPE_PRICE_PRO": ""
   },
   "observability": { "enabled": true }
 }
