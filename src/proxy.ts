@@ -90,6 +90,14 @@ const SUMMARY_MODEL = "claude-sonnet-5";
 const SUMMARY_MAX_TOKENS = 16000;
 const SUMMARY_TOOL = "record_summary";
 
+/**
+ * The summary schema's own field names, as the model closes them when it
+ * writes its whole answer into the first field instead of filling the rest.
+ * Finding one in the prose is proof of that failure, not a guess at it.
+ */
+const LEAKED_FIELD_TAGS = ["</summary_md>", "<topic_slug>", "<key_terms>",
+  "<action_items>", "</record_summary>"] as const;
+
 // --- Limits -----------------------------------------------------------------
 
 /**
@@ -543,6 +551,26 @@ proxy.post("/proxy/summarize", async (c) => {
     console.log(`proxy: anthropic returned no summary (stop_reason=${answer?.stop_reason ?? "unknown"}, `
       + `keys=${summary ? Object.keys(summary).join("|") || "none" : "no input"})`);
     return c.json({ error: "no_summary", stop_reason: answer?.stop_reason ?? "" }, 502);
+  }
+  // The other way a summary comes back wrong, which is harder to see because
+  // the summary itself is real. On 2026-09-23 the model wrote the notes, the
+  // slug, seven key terms and two to-dos into summary_md as tag-delimited
+  // text and left the other three fields empty. It went back as a 200 and was
+  // filed under the fallback slug with an "Action items: none" section, that
+  // Friday's reading sitting in the body as markup. Two signatures, both
+  // proof rather than guesswork: one of the schema's own closing tags inside
+  // the prose, which no lecture contains, and a summary with no slug, no
+  // terms and no to-dos at once. Any ONE of those three empty is a thin
+  // lecture and passes.
+  const leaked = LEAKED_FIELD_TAGS.find((tag) => written.includes(tag));
+  const hollow = !String(summary?.topic_slug ?? "").trim()
+    && !(Array.isArray(summary?.key_terms) && summary.key_terms.length)
+    && !(Array.isArray(summary?.action_items) && summary.action_items.length);
+  if (leaked || hollow) {
+    console.log(`proxy: anthropic returned a malformed summary `
+      + `(${leaked ? `${leaked} in summary_md` : "no slug, terms or actions"}, `
+      + `stop_reason=${answer?.stop_reason ?? "unknown"})`);
+    return c.json({ error: "malformed_summary", stop_reason: answer?.stop_reason ?? "" }, 502);
   }
   return c.json({ summary, tokens });
 });
