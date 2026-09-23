@@ -380,6 +380,43 @@ describe("summarizing", () => {
     }
   });
 
+  it("refuses a summary that swallowed the other fields, rather than filing it", async () => {
+    // 2026-09-23, ENTR-4306: the model wrote the notes, the slug, seven key
+    // terms and two to-dos into summary_md as tag-delimited text and left the
+    // other three fields empty. summary_md was long and real, so this went
+    // back as a 200 and was filed under the fallback slug with an
+    // "Action items: none" section, that Friday's reading in the body as
+    // markup. Nothing said so.
+    const leaked = {
+      summary_md: "The lecture builds on the execution engine. </summary_md> "
+        + "<topic_slug>Execution-Vs-Innovation</topic_slug>",
+      topic_slug: "", key_terms: [], action_items: [],
+    };
+    const hollow = { summary_md: "## Real notes, and nothing around them", topic_slug: "", key_terms: [], action_items: [] };
+    for (const [name, input] of [["leaked", leaked], ["hollow", hollow]] as const) {
+      upstream(() =>
+        new Response(JSON.stringify({
+          content: [{ type: "tool_use", name: "record_summary", input }],
+          stop_reason: "tool_use",
+          usage: { input_tokens: 10, output_tokens: 5 },
+        }), { status: 200, headers: { "Content-Type": "application/json" } }),
+      );
+      const { token } = await claimDevice(`${name}@example.com`);
+      const res = await postJson("/proxy/summarize", { transcript: "a lecture", course: "X", date: "2026-09-23" }, bearer(token));
+      expect(res.status).toBe(502);
+      expect((await res.json() as { error: string }).error).toBe("malformed_summary");
+    }
+  });
+
+  it("still passes a thin lecture through, because one empty field is not a failure", async () => {
+    // summaryOk has a slug and no terms and no to-dos: a short class, filed.
+    const calls = upstream(summaryOk());
+    const { token } = await claimDevice("thin@example.com");
+    const res = await postJson("/proxy/summarize", { transcript: "a lecture", course: "X", date: "2026-09-23" }, bearer(token));
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(1);
+  });
+
   it("rate limits summarizing more tightly than transcribing", async () => {
     const calls = upstream(summaryOk());
     const { token } = await claimDevice("sumflood@example.com");
@@ -502,7 +539,9 @@ describe("two calls at once cannot both spend the last of the allowance", () => 
     const calls = slowUpstream(() =>
       new Response(
         JSON.stringify({
-          content: [{ type: "tool_use", name: "record_summary", input: { summary_md: "## Topic" } }],
+          // A slug as well as prose: this test is about the allowance race,
+          // and a summary with nothing around it is now refused on its own.
+          content: [{ type: "tool_use", name: "record_summary", input: { summary_md: "## Topic", topic_slug: "Job-Order-Costing" } }],
           usage: { input_tokens: 8000, output_tokens: 1500 },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
