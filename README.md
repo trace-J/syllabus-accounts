@@ -1,6 +1,6 @@
 # syllabus-accounts
 
-Accounts for [Syllabus](https://github.com/trace-J/LectureAI): a Google sign-in,
+Accounts for [Syllabus](https://github.com/SyllabusAI/LectureAI): a Google sign-in,
 and a way for the Syllabus panel running on somebody's Mac to claim an
 identity under it. A Cloudflare Worker with a D1 database, published at
 `syllabusaccounts.maincoursemedia.com`.
