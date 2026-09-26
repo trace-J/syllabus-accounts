@@ -2,8 +2,8 @@
 #
 # Nothing here needs a Cloudflare token. The tests run in workerd against a
 # throwaway D1 with fake bindings (vitest.config.ts), and `wrangler types` is
-# local codegen, so CI never touches the real account. Deploying is still a
-# person running `npm run deploy`.
+# local codegen, so CI never touches the real account. Deploying is
+# deploy.yml, which runs after this on main.
 name: CI
 
 on:

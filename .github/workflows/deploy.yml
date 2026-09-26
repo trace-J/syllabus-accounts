@@ -1,0 +1,66 @@
+# Every merge to main deploys the Worker, so production is whatever main says
+# and not whatever laptop last ran `npm run deploy`. Migrations go first, the
+# same order a person followed by hand (README, "Deploying").
+#
+# Needs one repository secret, CLOUDFLARE_API_TOKEN: an account-scoped token
+# with Workers Scripts:Edit, D1:Edit, and Workers Routes:Edit on the zone that
+# carries the custom domain. The account id is pinned in wrangler.jsonc, so the
+# token needs no account selection. Worker secrets (API keys, STRIPE_*) are not
+# touched here; `wrangler secret put` stays a person's job.
+#
+# Nothing deploys unless CI is green on the same commit: the workflow waits on
+# the `check` job instead of trusting that branch protection ran it.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Wait for CI on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 40); do
+            state=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
+              --jq '[.check_runs[] | select(.name=="check")] | first | .conclusion // "pending"')
+            echo "check: $state"
+            case "$state" in
+              success) exit 0 ;;
+              failure|cancelled|timed_out|action_required) echo "::error::CI failed on ${GITHUB_SHA}; not deploying."; exit 1 ;;
+            esac
+            sleep 30
+          done
+          echo "::error::CI never finished; not deploying."; exit 1
+
+      - name: Apply D1 migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npm run db:migrate:remote
+
+      - name: Deploy Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npm run deploy

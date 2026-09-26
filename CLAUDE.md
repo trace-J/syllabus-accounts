@@ -18,7 +18,9 @@ It is the account backend for [LectureAI](https://github.com/trace-J/LectureAI)
 - **No secrets in the repo.** `GOOGLE_CLIENT_SECRET` and `SESSION_SECRET` live
   in the Worker (`npx wrangler secret put`) and in the gitignored `.dev.vars`.
   The Google client id in `wrangler.jsonc` is public by design.
-- Deploy is `npm run deploy` from `main` after the PR merges; run
-  `npm run db:migrate:remote` first when a migration was added.
+- A merge to `main` deploys by itself (`.github/workflows/deploy.yml`:
+  migrations, then `wrangler deploy`). Confirm the Deploy run went green with
+  `gh run list --workflow Deploy --limit 1`. By hand, from `main`:
+  `npm run db:migrate:remote` when a migration was added, then `npm run deploy`.
 - Copy anyone reads: no em dashes, US spelling and phrasing.
 - `npm test` and `npm run typecheck` must pass before a PR.

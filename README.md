@@ -120,6 +120,13 @@ nothing reaches Google. The token endpoint is stubbed where a test needs it.
 
 ## Deploying
 
+A merge to `main` deploys on its own: `.github/workflows/deploy.yml` waits
+for CI on that commit, applies any new D1 migration, then runs
+`wrangler deploy`. It needs the repository secret `CLOUDFLARE_API_TOKEN`
+(Workers Scripts:Edit, D1:Edit, Workers Routes:Edit on the zone). Until
+that secret exists the workflow fails at the migration step and nothing
+changes live, so the by-hand path below still works and is the fallback:
+
 ```bash
 npm run db:migrate:remote         # when a migration was added
 npm run deploy
