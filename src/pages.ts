@@ -29,7 +29,7 @@ export function page(title: string, body: string): string {
 <body><h1>${h(title)}</h1>${body}</body></html>`;
 }
 
-const FOOTER = `<p class="muted" style="margin-top:3em"><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="https://github.com/trace-J/LectureAI">Syllabus on GitHub</a></p>`;
+const FOOTER = `<p class="muted" style="margin-top:3em"><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="https://github.com/SyllabusAI/LectureAI">Syllabus on GitHub</a></p>`;
 
 export function landing(): string {
   return page(
@@ -76,11 +76,11 @@ export function privacyPage(): string {
        <li>Disconnect Google Drive from your account page; the grant is revoked at Google for every Mac at once.
            You can also remove Syllabus under your Google account's third-party access settings.</li>
        <li>To delete your account and everything stored with it, open an issue at
-           <a href="https://github.com/trace-J/syllabus-accounts">github.com/trace-J/syllabus-accounts</a> or use
+           <a href="https://github.com/SyllabusAI/syllabus-accounts">github.com/SyllabusAI/syllabus-accounts</a> or use
            the support email on the Google sign-in screen, and it will be removed.</li>
      </ul>
      <p>This service is open source; its code is at
-        <a href="https://github.com/trace-J/syllabus-accounts">github.com/trace-J/syllabus-accounts</a>.</p>
+        <a href="https://github.com/SyllabusAI/syllabus-accounts">github.com/SyllabusAI/syllabus-accounts</a>.</p>
      ${FOOTER}`,
   );
 }
@@ -98,7 +98,7 @@ export function termsPage(): string {
      <p>There is no warranty of any kind, and the people behind Syllabus are not liable for any loss arising from its
         use, to the extent the law allows.</p>
      <p>Questions: open an issue at
-        <a href="https://github.com/trace-J/syllabus-accounts">github.com/trace-J/syllabus-accounts</a>.</p>
+        <a href="https://github.com/SyllabusAI/syllabus-accounts">github.com/SyllabusAI/syllabus-accounts</a>.</p>
      ${FOOTER}`,
   );
 }

@@ -1,15 +1,15 @@
 # syllabus-accounts: repo instructions (Claude Code: follow this automatically)
 
-**Personal repo of Trace (`github.com/trace-J`), NOT a Groundbreaker fleet repo.**
+**A SyllabusAI org repo (`github.com/SyllabusAI`), owned by Trace and Liam, NOT a Groundbreaker fleet repo.**
 `~/apps/CLAUDE.md` does not apply here: never move this into the org, never
 include it in fleet sweeps, and do not use `client-factory` or the VPS runner.
-It is the account backend for [LectureAI](https://github.com/trace-J/LectureAI)
+It is the account backend for [LectureAI](https://github.com/SyllabusAI/LectureAI)
 (Syllabus), and both repos are public.
 
 ## Git workflow
 
 1. `git checkout main && git pull --ff-only`
-2. Branch before editing, never commit on `main`: `git checkout -b trace-J/<short-description>`
+2. Branch before editing, never commit on `main`: `git checkout -b <you>/<short-description>`
 3. `git add -A && git commit -m "message"`
 4. `git push -u origin <branch>`, `gh pr create --fill`, `gh pr merge --squash --delete-branch`
 

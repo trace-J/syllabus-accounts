@@ -102,5 +102,5 @@ jobs:
       - name: The lecture prompt must match LectureAI's
         run: |
           curl -fsSL -o /tmp/schemas.py \
-            https://raw.githubusercontent.com/trace-J/LectureAI/main/intake/schemas.py
+            https://raw.githubusercontent.com/SyllabusAI/LectureAI/main/intake/schemas.py
           python3 .github/workflows/prompt_parity.py /tmp/schemas.py src/prompts.ts
